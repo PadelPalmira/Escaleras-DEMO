@@ -1,0 +1,42 @@
+{
+  "_comentario": "Salida REAL de Postgres (proyecto de produccion) para escenarios deterministas. Generada con un bloque DO que crea datos de prueba, corre las funciones reales y borra todo en la misma transaccion. Formato canonico: cada equipo se escribe con sus dos jugadores ordenados y los dos equipos ordenados por su jugador mas chico, porque cual equipo queda como 'team1' depende del uuid aleatorio del partido de origen y no es parte de la logica. Si el SQL cambia, hay que regenerar esto y volver a correr verificar_motor.js.",
+  "_generado": "2026-08-22",
+  "escenarios": {
+    "individual_7_rondas": {
+      "formato": "individual",
+      "jugadores": 12,
+      "rondas": "R1C1:8+9vs10+11=8-12 | R1C2:1+4vs2+12=10-10 | R1C3:3+7vs5+6=12-7 | R2C1:2+11vs10+12=10-10 | R2C2:3+9vs7+8=12-7 | R2C3:1+5vs4+6=8-12 | R3C1:3+10vs9+12=12-7 | R3C2:2+4vs6+11=8-12 | R3C3:1+8vs5+7=10-10 | R4C1:3+11vs6+10=12-8 | R4C2:5+12vs7+9=10-10 | R4C3:1+2vs4+8=12-7 | R5C1:3+7vs9+11=10-10 | R5C2:1+6vs2+10=7-12 | R5C3:4+12vs5+8=12-8 | R6C1:2+9vs10+11=12-7 | R6C2:3+4vs7+12=12-8 | R6C3:1+5vs6+8=10-10 | R7C1:2+3vs4+9=12-8 | R7C2:6+11vs8+10=10-10 | R7C3:1+12vs5+7=7-12",
+      "totales": "1=121.30 2=189.10 3=209.50 4=153.40 5=124.40 6=145.80 7=146.30 8=123.90 9=175.20 10=180.40 11=188.20 12=140.30"
+    },
+    "parejas_7_rondas": {
+      "formato": "parejas",
+      "jugadores": 12,
+      "rondas": "R1C1:5+6vs9+10=8-12 | R1C2:7+8vs11+12=10-10 | R1C3:1+2vs3+4=12-7 | R2C1:7+8vs9+10=10-10 | R2C2:1+2vs5+6=12-7 | R2C3:3+4vs11+12=8-12 | R3C1:1+2vs7+8=12-7 | R3C2:9+10vs11+12=8-12 | R3C3:3+4vs5+6=10-10 | R4C1:1+2vs11+12=8-12 | R4C2:5+6vs7+8=10-10 | R4C3:3+4vs9+10=12-7 | R5C1:7+8vs11+12=10-10 | R5C2:1+2vs3+4=12-7 | R5C3:5+6vs9+10=12-8 | R6C1:1+2vs11+12=12-7 | R6C2:5+6vs7+8=12-8 | R6C3:3+4vs9+10=10-10 | R7C1:1+2vs5+6=12-8 | R7C2:9+10vs11+12=10-10 | R7C3:3+4vs7+8=7-12",
+      "totales": "1=204.70 2=204.70 3=113.90 4=113.90 5=154.40 6=154.40 7=154.70 8=154.70 9=145.10 10=145.10 11=176.10 12=176.10"
+    },
+    "sustitutos_2_rondas": {
+      "formato": "individual",
+      "jugadores": 15,
+      "titulares": 12,
+      "sustituciones": [
+        {
+          "titular": 1,
+          "sustituto": 13,
+          "tipo": "normal"
+        },
+        {
+          "titular": 2,
+          "sustituto": 14,
+          "tipo": "coach"
+        },
+        {
+          "titular": 3,
+          "sustituto": 15,
+          "tipo": "admin_sin_reparto"
+        }
+      ],
+      "rondas": "R1C1:4+15vs5+8=8-12 | R1C2:7+14vs11+12=10-10 | R1C3:6+9vs10+13=12-7 | R2C1:5+12vs8+11=10-10 | R2C2:4+9vs6+15=12-7 | R2C3:7+13vs10+14=8-12",
+      "totales": "1=17.82 2=0.00 4=51.20 5=66.40 6=43.30 7=34.40 8=70.00 9=56.30 10=36.90 11=60.60 12=57.00 13=9.18 14=0.00 15=38.20"
+    }
+  }
+}

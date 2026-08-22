@@ -1,0 +1,200 @@
+/* ============================================================
+   Andamio de la demo — barra de arriba, tutorial y diálogos.
+   Va en un archivo aparte para que styles.css quede idéntico al
+   de la app real: así lo que ves aquí se ve exactamente igual
+   allá, sin nada movido por la demo.
+   ============================================================ */
+
+:root {
+  --demo-borde: rgba(255, 255, 255, 0.12);
+  --demo-fondo: #14141a;
+  --demo-alto: 92px;
+}
+
+/* El alto real lo mide la consola y lo escribe en --demo-alto: la barra
+   cambia de altura según el ancho de pantalla y el largo de los nombres. */
+body.con-demo-barra { padding-top: var(--demo-alto); }
+
+/* El encabezado de la app es sticky en top:0 y los avisos flotan desde
+   arriba: los dos hay que bajarlos para que no queden tapados. */
+body.con-demo-barra .app-header { top: var(--demo-alto); }
+body.con-demo-barra .toast-wrap { top: calc(var(--demo-alto) + var(--header-h) + var(--sp-3)); }
+
+/* ---------- barra superior ---------- */
+
+.demo-barra {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 900;
+  background: var(--demo-fondo);
+  border-bottom: 1px solid var(--demo-borde);
+  padding: 7px max(10px, env(safe-area-inset-left)) 8px;
+  display: flex; flex-direction: column; gap: 6px;
+  font-size: 12px;
+}
+
+.demo-fila {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  max-width: 560px; margin-inline: auto; width: 100%;
+}
+
+.demo-espacio { flex: 1 1 auto; }
+
+.demo-sello {
+  background: linear-gradient(90deg, #00f2ea, #ff00c1);
+  color: #0b0b0d; font-weight: 800; letter-spacing: 0.08em;
+  border-radius: 6px; padding: 2px 8px; font-size: 11px; flex: 0 0 auto;
+}
+
+.demo-nota { color: rgba(255, 255, 255, 0.55); font-size: 11px; }
+
+.demo-par { display: flex; align-items: center; gap: 6px; flex: 1 1 210px; min-width: 0; }
+
+.demo-etiqueta {
+  color: rgba(255, 255, 255, 0.5); font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.05em; flex: 0 0 auto;
+}
+
+.demo-select {
+  flex: 1 1 140px; min-width: 0; max-width: 100%;
+  background: rgba(255, 255, 255, 0.07);
+  color: #fff; border: 1px solid var(--demo-borde);
+  border-radius: 8px; padding: 5px 8px; font-size: 12px;
+  font-family: inherit;
+}
+.demo-select:focus-visible { outline: 2px solid #00f2ea; outline-offset: 1px; }
+
+.demo-btn {
+  background: rgba(255, 255, 255, 0.1); color: #fff;
+  border: 1px solid var(--demo-borde); border-radius: 8px;
+  padding: 5px 10px; font-size: 12px; font-weight: 600;
+  cursor: pointer; font-family: inherit; flex: 0 0 auto;
+}
+.demo-btn:hover { background: rgba(255, 255, 255, 0.16); }
+.demo-btn:focus-visible { outline: 2px solid #00f2ea; outline-offset: 1px; }
+.demo-btn-ghost { background: transparent; }
+.demo-btn-peligro { background: rgba(255, 0, 90, 0.18); border-color: rgba(255, 0, 90, 0.45); }
+
+/* ---------- diálogos de la demo ---------- */
+
+.demo-fondo {
+  position: fixed; inset: 0; z-index: 1200;
+  background: rgba(0, 0, 0, 0.68);
+  display: flex; align-items: center; justify-content: center;
+  padding: 18px;
+}
+.demo-hoja {
+  background: #17171d; border: 1px solid var(--demo-borde);
+  border-radius: 16px; padding: 20px; max-width: 420px; width: 100%;
+  max-height: 80vh; overflow-y: auto; color: #fff;
+}
+.demo-hoja h3 { margin: 0 0 12px; font-size: 17px; }
+.demo-hoja p { margin: 0 0 10px; font-size: 13.5px; line-height: 1.5; color: rgba(255, 255, 255, 0.82); }
+.demo-hoja .demo-p-chica { font-size: 12.5px; color: rgba(255, 255, 255, 0.6); }
+.demo-hoja-botones { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; flex-wrap: wrap; }
+
+/* ---------- panel de tutorial ----------
+   Regla dura: el tutorial NUNCA debe estorbarle a la app. Cerrado es una
+   pastilla chica y el contenido reserva su espacio; abierto en celular es
+   una hoja de abajo con fondo, para que se vea que está encima y se cierre
+   tocando fuera. */
+
+.demo-tuto {
+  position: fixed; z-index: 880;
+  right: 12px; bottom: calc(var(--nav-h, 64px) + 16px);
+  width: min(320px, calc(100vw - 24px));
+  background: #17171d; border: 1px solid var(--demo-borde);
+  border-radius: 14px; padding: 12px 13px 13px;
+  color: #fff; font-size: 13px; box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
+  max-height: min(58vh, 520px); overflow-y: auto;
+}
+.demo-tuto.cerrado {
+  padding: 0; background: transparent; border: none; box-shadow: none;
+  width: auto; overflow: visible; right: 12px;
+}
+.demo-tuto-abrir {
+  background: linear-gradient(90deg, #00f2ea, #ff00c1); color: #0b0b0d;
+  border: none; border-radius: 999px; padding: 9px 16px;
+  font-weight: 800; font-size: 12.5px; cursor: pointer; font-family: inherit;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+/* Fondo oscuro detrás del tutorial abierto en pantallas chicas. */
+.demo-tuto-fondo {
+  position: fixed; inset: 0; z-index: 870;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.demo-tuto-cabeza { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
+.demo-tuto-cabeza strong { flex: 1 1 auto; font-size: 13.5px; line-height: 1.35; }
+.demo-tuto-x {
+  background: none; border: none; color: rgba(255, 255, 255, 0.55);
+  font-size: 22px; line-height: 1; cursor: pointer; padding: 0 4px; flex: 0 0 auto;
+}
+.demo-tuto-x:hover { color: #fff; }
+
+.demo-tuto-intro { color: rgba(255, 255, 255, 0.62); font-size: 12.2px; line-height: 1.5; margin: 0 0 10px; }
+.demo-tuto-ok { color: #00f2ea; font-weight: 700; margin: 0 0 10px; }
+
+.demo-tuto-lista { display: flex; flex-direction: column; gap: 6px; }
+.demo-tuto-item {
+  display: flex; align-items: center; gap: 9px; text-align: left;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--demo-borde);
+  border-radius: 10px; padding: 9px 11px; color: #fff;
+  font-size: 12.8px; cursor: pointer; font-family: inherit; line-height: 1.35;
+}
+.demo-tuto-item:hover { background: rgba(255, 255, 255, 0.1); }
+.demo-tuto-num {
+  flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%;
+  background: rgba(0, 242, 234, 0.18); color: #00f2ea;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 800;
+}
+
+.demo-tuto-pasos { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.demo-tuto-paso {
+  padding-left: 22px; position: relative; line-height: 1.42; font-size: 12.6px;
+  color: rgba(255, 255, 255, 0.45);
+}
+.demo-tuto-paso::before { content: '○'; position: absolute; left: 2px; top: 0; font-size: 12px; }
+.demo-tuto-paso.hecho { color: rgba(255, 255, 255, 0.35); text-decoration: line-through; }
+.demo-tuto-paso.hecho::before { content: '✓'; color: #00f2ea; text-decoration: none; }
+.demo-tuto-paso.ahora { color: #fff; font-weight: 600; }
+.demo-tuto-paso.ahora::before { content: '▸'; color: #ff00c1; }
+.demo-tuto-porque {
+  margin-top: 4px; font-weight: 400; font-size: 11.8px; line-height: 1.45;
+  color: rgba(255, 255, 255, 0.58);
+  border-left: 2px solid rgba(255, 0, 193, 0.5); padding-left: 8px;
+}
+
+.demo-tuto-pies { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* El atajo de captura se marca distinto para que nadie lo confunda con un
+   botón de la app real. */
+.demo-atajo {
+  border-style: dashed !important;
+  opacity: 0.88;
+}
+
+/* La pastilla del tutorial vive encima de la barra de abajo; se reserva su
+   espacio para que nunca tape el último botón de una pantalla larga. */
+body.con-demo-barra { padding-bottom: 52px; }
+
+@media (max-width: 639px) {
+  .demo-nota { display: none; }
+  /* Abierto en celular = hoja de abajo, de lado a lado. */
+  .demo-tuto {
+    right: 0; left: 0; bottom: 0; width: auto;
+    border-radius: 16px 16px 0 0; max-height: 62vh;
+    padding-bottom: calc(13px + env(safe-area-inset-bottom));
+  }
+  .demo-tuto.cerrado {
+    right: 10px; left: auto; bottom: calc(var(--nav-h, 64px) + 10px);
+    border-radius: 999px;
+  }
+}
+
+@media print {
+  .demo-barra, .demo-tuto, .demo-fondo { display: none !important; }
+  body.con-demo-barra { padding-top: 0; }
+}
