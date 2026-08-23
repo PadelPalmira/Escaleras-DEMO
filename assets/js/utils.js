@@ -68,9 +68,22 @@ export function formatFechaHora(isoTs) {
   return fmtDateTime.format(new Date(isoTs));
 }
 
+/* ============================================================
+   El reloj de la app
+   ------------------------------------------------------------
+   TODO el código que necesita saber "qué hora es" pasa por aquí,
+   igual que en la base de datos pasa por public.ahora(). En
+   producción es el reloj de verdad y no cambia nada; existe para
+   poder probar la app en otro momento de la semana sin esperar a
+   que llegue el domingo.
+   ============================================================ */
+let _reloj = () => new Date();
+export function setReloj(fn) { _reloj = typeof fn === 'function' ? fn : (() => new Date()); }
+export function ahora() { return _reloj(); }
+
 /** Regresa "hace X" / "en X" en español, redondeado a la unidad más clara. */
 export function relativeTime(isoTs) {
-  const diffMs = new Date(isoTs).getTime() - Date.now();
+  const diffMs = new Date(isoTs).getTime() - ahora().getTime();
   const diffH = diffMs / 3600000;
   const abs = Math.abs(diffH);
   const futuro = diffH > 0;
@@ -83,7 +96,7 @@ export function relativeTime(isoTs) {
 
 export function todayISO() {
   // Fecha de "hoy" según CDMX, en formato YYYY-MM-DD.
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: CLUB_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: CLUB_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(ahora());
   const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
   return `${map.year}-${map.month}-${map.day}`;
 }

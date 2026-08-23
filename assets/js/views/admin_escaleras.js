@@ -1,13 +1,18 @@
-import { el, formatFecha, formatHora, toast, humanizeError, openSheet, confirmSheet } from '../utils.js';
-import { icon } from '../icons.js';
+import { el, todayISO, formatFecha, formatHora, toast, humanizeError, openSheet, confirmSheet } from '../utils.js';
 import {
   getMyProfile, esAdminOMaestro,
   getEscalerasAdmin, getRegistrosEscalera, getRondasConPartidos,
-  generarRondaInicial, generarSiguienteRonda, registrarResultadoPartido, corregirResultadoPartido, cerrarEscalera,
+  generarSiguienteRonda, registrarResultadoPartido, corregirResultadoPartido, cerrarEscalera,
   marcarNoShow, cancelarRegistro, asignarSustituto, asignarSustitutoAdmin, buscarJugadores,
-  getRecomendacionCupo, ajustarCanchas, cancelarEscaleraAdmin,
+  cancelarEscaleraAdmin,
+  comenzarEscalera, adminAgregarJugador, getAjusteNum,
 } from '../api.js';
-import { navigate } from '../router.js';
+
+/* El Inicio del Admin manda directo a UNA noche. Se guarda aquí cuál para
+   que al entrar a la pantalla se abra esa, en vez de dejar a recepción
+   buscándola otra vez en la lista. */
+let nochePendiente = null;
+export function abrirNoche(escaleraId) { nochePendiente = escaleraId; }
 
 const FORMAT_LABEL = { individual: 'Individual', parejas: 'Parejas Fijas', retas_abiertas: 'Retas Abiertas' };
 const ESTADO_ESCALERA = {
@@ -35,34 +40,62 @@ export async function renderAdminEscaleras() {
   }
 
   const wrap = el('div');
-  await pintarLista(wrap);
+  if (nochePendiente) {
+    const id = nochePendiente;
+    nochePendiente = null;
+    await pintarDetalle(wrap, id);
+  } else {
+    await pintarLista(wrap);
+  }
   return wrap;
 }
 
 async function pintarLista(wrap) {
   wrap.innerHTML = '';
-  wrap.appendChild(el('div', { class: 'h1 mb-2' }, 'Resultados de escaleras'));
-  wrap.appendChild(el('p', { class: 'text-muted mb-4' }, 'Elige una noche para capturar resultados o gestionar el roster.'));
+  wrap.appendChild(el('div', { class: 'h1 mb-2' }, 'Noches del club'));
+  wrap.appendChild(el('p', { class: 'text-muted mb-4' }, 'Aquí ves quién se anotó, arrancas la noche y capturas los resultados.'));
 
   const escaleras = await getEscalerasAdmin();
   if (escaleras.length === 0) {
     wrap.appendChild(el('div', { class: 'empty-state' }, [el('div', { class: 'emoji' }, '📅'), el('p', {}, 'No hay escaleras recientes o próximas.')]));
     return;
   }
-  escaleras.forEach((esc) => {
-    const ws = esc.weekday_schedule;
-    const est = ESTADO_ESCALERA[esc.status] || { text: esc.status, cls: 'badge-neutral' };
-    const card = el('div', { class: 'card card-tappable mt-4', onclick: () => pintarDetalle(wrap, esc.id) }, [
-      el('div', { class: 'row-between' }, [
-        el('div', {}, [
-          el('div', { style: 'font-weight:800;font-size:15px;' }, formatFecha(esc.session_date)),
-          el('div', { class: 'text-tiny mt-1' }, `${FORMAT_LABEL[ws.format] || ws.format}${ws.category ? ' · Cat ' + ws.category : ''} · ${formatHora(ws.start_time)}`),
-        ]),
-        el('span', { class: `badge ${est.cls}` }, est.text),
+  // La de hoy primero y bien marcada: es la que recepcion necesita 9 de cada
+  // 10 veces que entra aquí.
+  const hoy = todayISO();
+  const deHoy = escaleras.filter((e) => e.session_date === hoy);
+  const proximas = escaleras.filter((e) => e.session_date > hoy).sort((a, b) => a.session_date.localeCompare(b.session_date));
+  const pasadas = escaleras.filter((e) => e.session_date < hoy);
+  const pendientes = pasadas.filter((e) => e.status !== 'completed' && e.status !== 'cancelled');
+  const cerradas = pasadas.filter((e) => e.status === 'completed' || e.status === 'cancelled');
+
+  const seccion = (titulo, lista, destacar) => {
+    if (!lista.length) return;
+    wrap.appendChild(el('div', { class: 'section-title' }, titulo));
+    lista.forEach((esc) => wrap.appendChild(tarjetaNoche(wrap, esc, destacar)));
+  };
+
+  seccion('Hoy', deHoy, true);
+  seccion('Sin cerrar — te faltó terminarlas', pendientes, true);
+  seccion('Ya vienen', proximas, false);
+  seccion('Ya cerradas', cerradas, false);
+}
+
+function tarjetaNoche(wrap, esc, destacar) {
+  const ws = esc.weekday_schedule;
+  const est = ESTADO_ESCALERA[esc.status] || { text: esc.status, cls: 'badge-neutral' };
+  return el('div', {
+    class: 'card card-tappable mt-3' + (destacar ? ' card-hero' : ''),
+    onclick: () => pintarDetalle(wrap, esc.id),
+  }, [
+    el('div', { class: 'row-between' }, [
+      el('div', {}, [
+        el('div', { style: 'font-weight:800;font-size:15px;' }, formatFecha(esc.session_date)),
+        el('div', { class: 'text-tiny mt-1' }, `${FORMAT_LABEL[ws.format] || ws.format}${ws.category ? ' · Cat ' + ws.category : ''} · ${formatHora(ws.start_time)}`),
       ]),
-    ]);
-    wrap.appendChild(card);
-  });
+      el('span', { class: `badge ${est.cls}` }, est.text),
+    ]),
+  ]);
 }
 
 async function pintarDetalle(wrap, escaleraId) {
@@ -95,67 +128,46 @@ async function pintarDetalle(wrap, escaleraId) {
     return;
   }
 
-  // ---- Cupo ----
-  if (esc.status !== 'completed' && esc.status !== 'cancelled') {
-    try {
-      const rec = await getRecomendacionCupo(escaleraId);
-      if (rec) wrap.appendChild(renderPanelCupo(esc, rec, refresh));
-    } catch (err) {
-      console.error('No se pudo calcular la recomendación de cupo:', err);
-    }
+  // ============================================================
+  //  El orden de esta pantalla es el orden en que pasan las cosas
+  //  una noche: primero ves cuántos van, luego arrancas, y hasta
+  //  entonces aparecen las rondas. Nada de decidir antes de tiempo.
+  // ============================================================
+
+  const confirmados = registros.filter((r) => ['confirmed', 'substitute'].includes(r.status));
+  const enEspera = registros.filter((r) => r.status === 'waitlist');
+  const cupo = ws.capacity || 12;
+  const faltan = Math.max(cupo - confirmados.length, 0);
+  const completo = confirmados.length >= cupo;
+  const yaArranco = ['in_progress', 'completed'].includes(esc.status);
+
+  // ---- Cuántos van ----
+  if (esc.status !== 'cancelled') {
+    wrap.appendChild(renderCuantosVan(esc, confirmados.length, cupo, enEspera.length, yaArranco));
   }
 
-  // ---- Roster ----
-  wrap.appendChild(el('div', { class: 'section-title' }, `Jugadores registrados (${registros.length})`));
-  if (registros.length === 0) {
-    wrap.appendChild(el('div', { class: 'card' }, el('p', { class: 'text-muted' }, 'Todavía nadie se ha registrado.')));
-  } else {
-    const rosterCard = el('div', { class: 'card' });
-    registros.forEach((r, i) => {
-      if (i > 0) rosterCard.appendChild(el('hr', { class: 'sep', style: 'margin:10px 0;' }));
-      const st = REG_STATUS[r.status] || { text: r.status, cls: 'badge-neutral' };
-      const row = el('div', { class: 'row-between' }, [
-        el('div', {}, [
-          el('div', { style: 'font-weight:600;font-size:14px;' }, (r.profiles && r.profiles.full_name) || '(sin nombre)'),
-          el('div', { class: 'text-tiny' }, r.is_coach_substitute ? 'Sustituto — coach' : ''),
-        ]),
-        el('span', { class: `badge ${st.cls}` }, st.text),
-      ]);
-      rosterCard.appendChild(row);
-      if (['confirmed', 'substitute'].includes(r.status)) {
-        const acciones = el('div', { class: 'btn-row mt-2' }, [
-            el('button', { class: 'btn btn-secondary btn-sm', onclick: () => abrirSustituto(r, refresh, ws.format) }, 'Sustituto'),
-          el('button', { class: 'btn btn-secondary btn-sm', onclick: async () => {
-            const ok = await confirmSheet({ title: '¿Marcar no-show?', body: 'Aplica la penalización de no-show configurada del mes en curso.', confirmLabel: 'Sí, marcar', danger: true });
-            if (!ok) return;
-            try { await marcarNoShow(r.id); toast('Marcado como no-show.', 'success'); refresh(); }
-            catch (err) { toast(humanizeError(err), 'error'); }
-          } }, 'No-show'),
-          el('button', { class: 'btn btn-danger btn-sm', onclick: async () => {
-            const ok = await confirmSheet({ title: '¿Cancelar este registro?', confirmLabel: 'Sí, cancelar', danger: true });
-            if (!ok) return;
-            try { await cancelarRegistro(r.id); toast('Registro cancelado.', 'success'); refresh(); }
-            catch (err) { toast(humanizeError(err), 'error'); }
-          } }, 'Cancelar'),
-        ]);
-        rosterCard.appendChild(acciones);
-      }
-    });
-    wrap.appendChild(rosterCard);
+  // ---- El botón grande de la noche ----
+  if (esc.status === 'scheduled') {
+    wrap.appendChild(renderComenzar(esc, confirmados.length, cupo, faltan, completo, refresh));
   }
 
-  // ---- Rondas ----
+  // ---- Quién va ----
+  if (esc.status !== 'cancelled') {
+    wrap.appendChild(renderRoster(esc, ws, registros, confirmados, enEspera, cupo, refresh));
+  }
+
+  // ---- Rondas (solo cuando la noche ya arrancó) ----
+  if (esc.status === 'scheduled') return;
+  if (esc.status === 'cancelled') {
+    wrap.appendChild(el('div', { class: 'aviso aviso-danger mt-4' },
+      'Esta noche se canceló. Nadie recibió penalización ni perdió puntos.'));
+    return;
+  }
+
   wrap.appendChild(el('div', { class: 'section-title' }, 'Rondas'));
-
   if (rondas.length === 0) {
-    wrap.appendChild(el('div', { class: 'card' }, [
-      el('p', { class: 'text-muted mb-3' }, 'Todavía no se ha generado la primera ronda.'),
-      el('button', { class: 'btn btn-primary', onclick: async (e) => {
-        e.target.disabled = true; e.target.textContent = 'Generando…';
-        try { await generarRondaInicial(escaleraId); toast('Ronda 1 generada.', 'success'); refresh(); }
-        catch (err) { toast(humanizeError(err), 'error'); e.target.disabled = false; e.target.textContent = 'Generar ronda 1'; }
-      } }, 'Generar ronda 1'),
-    ]));
+    wrap.appendChild(el('div', { class: 'card' },
+      el('p', { class: 'text-muted' }, 'Esta noche está marcada como en juego pero no tiene rondas. Avisa a dirección.')));
     return;
   }
 
@@ -163,7 +175,8 @@ async function pintarDetalle(wrap, escaleraId) {
     const rondaCard = el('div', { class: 'card mt-4' });
     rondaCard.appendChild(el('div', { class: 'row-between mb-2' }, [
       el('div', { style: 'font-weight:700;' }, `Ronda ${ronda.round_number}`),
-      el('span', { class: `badge ${ronda.status === 'completed' ? 'badge-success' : 'badge-warning'}` }, ronda.status === 'completed' ? 'Completa' : 'En curso'),
+      el('span', { class: `badge ${ronda.status === 'completed' ? 'badge-success' : 'badge-warning'}` },
+        ronda.status === 'completed' ? 'Completa' : 'En curso'),
     ]));
     ronda.partidos.forEach((m, i) => {
       if (i > 0) rondaCard.appendChild(el('hr', { class: 'sep', style: 'margin:10px 0;' }));
@@ -174,28 +187,253 @@ async function pintarDetalle(wrap, escaleraId) {
 
   const ultimaRonda = rondas[rondas.length - 1];
   const pendientes = ultimaRonda.partidos.filter((m) => m.status === 'pending').length;
+  const tope = await getAjusteNum('max_rondas_escalera', 7);
   const accionesFinales = el('div', { class: 'stack gap-3 mt-4' });
-  if (pendientes === 0) {
-    if (esc.status !== 'completed') {
+
+  if (pendientes > 0) {
+    accionesFinales.appendChild(el('p', { class: 'text-muted' },
+      `Faltan ${pendientes} partido(s) por capturar en la ronda ${ultimaRonda.round_number}.`));
+  } else if (esc.status === 'completed') {
+    accionesFinales.appendChild(el('p', { class: 'text-muted' },
+      'Esta noche ya está cerrada. Para corregir un resultado, usa "Corregir" en el partido correspondiente.'));
+  } else {
+    if (ultimaRonda.round_number < tope) {
       accionesFinales.appendChild(el('button', { class: 'btn btn-secondary', onclick: async (e) => {
         e.target.disabled = true; e.target.textContent = 'Generando…';
-        try { await generarSiguienteRonda(escaleraId); toast(`Ronda ${ultimaRonda.round_number + 1} generada.`, 'success'); refresh(); }
+        try { await generarSiguienteRonda(escaleraId); toast(`Ronda ${ultimaRonda.round_number + 1} lista.`, 'success'); refresh(); }
         catch (err) { toast(humanizeError(err), 'error'); e.target.disabled = false; e.target.textContent = 'Generar siguiente ronda'; }
       } }, 'Generar siguiente ronda'));
-      accionesFinales.appendChild(el('button', { class: 'btn btn-primary', onclick: async (e) => {
-        const ok = await confirmSheet({ title: '¿Cerrar la escalera?', body: 'Se otorgan los bonos de posición final según la cancha de cada jugador en esta última ronda. No se puede deshacer desde aquí.', confirmLabel: 'Sí, cerrar' });
-        if (!ok) return;
-        e.target.disabled = true; e.target.textContent = 'Cerrando…';
-        try { const res = await cerrarEscalera(escaleraId); toast('Escalera cerrada — bonos de posición otorgados.', 'success'); refresh(); }
-        catch (err) { toast(humanizeError(err), 'error'); e.target.disabled = false; e.target.textContent = 'Cerrar escalera'; }
-      } }, 'Cerrar escalera'));
     } else {
-      accionesFinales.appendChild(el('p', { class: 'text-muted' }, 'Esta escalera ya está cerrada. Para corregir un resultado, usa "Corregir" en el partido correspondiente.'));
+      accionesFinales.appendChild(el('div', { class: 'aviso aviso-neutral' },
+        `Ya se jugaron las ${tope} rondas de la noche. Cierra la escalera para repartir los bonos.`));
     }
-  } else {
-    accionesFinales.appendChild(el('p', { class: 'text-muted' }, `Faltan ${pendientes} partido(s) por capturar en la ronda ${ultimaRonda.round_number}.`));
+    accionesFinales.appendChild(el('button', { class: 'btn btn-primary', onclick: async (e) => {
+      const ok = await confirmSheet({
+        title: '¿Cerrar la noche?',
+        body: 'Se reparten los bonos de posición final según la cancha donde terminó cada quien, y la noche entra al ranking. No se puede deshacer desde aquí.',
+        confirmLabel: 'Sí, cerrar',
+      });
+      if (!ok) return;
+      e.target.disabled = true; e.target.textContent = 'Cerrando…';
+      try { await cerrarEscalera(escaleraId); toast('Noche cerrada — bonos repartidos.', 'success'); refresh(); }
+      catch (err) { toast(humanizeError(err), 'error'); e.target.disabled = false; e.target.textContent = 'Cerrar la noche'; }
+    } }, 'Cerrar la noche'));
   }
   wrap.appendChild(accionesFinales);
+}
+
+/* ============================================================
+   Cuántos van — el número que recepción necesita de un vistazo.
+   ============================================================ */
+function renderCuantosVan(esc, confirmados, cupo, espera, yaArranco) {
+  const box = el('div', { class: 'mt-4' });
+  const pct = Math.min(100, Math.round((confirmados / cupo) * 100));
+  const completo = confirmados >= cupo;
+
+  const card = el('div', { class: 'card' });
+  card.appendChild(el('div', { class: 'row-between' }, [
+    el('div', { style: 'font-size:30px;font-weight:800;line-height:1;' }, [
+      el('span', { style: completo ? 'color:var(--cyan);' : '' }, String(confirmados)),
+      el('span', { style: 'color:var(--text-tertiary);font-size:20px;' }, ` / ${cupo}`),
+    ]),
+    el('span', { class: `badge ${completo ? 'badge-success' : 'badge-warning'}` },
+      completo ? 'Cupo completo' : `Faltan ${cupo - confirmados}`),
+  ]));
+  card.appendChild(el('div', { class: 'cupo-bar mt-3' }, [
+    el('div', { class: `cupo-bar-fill${completo ? ' full' : ''}`, style: `width:${pct}%;` }),
+  ]));
+  card.appendChild(el('p', { class: 'text-tiny mt-2' },
+    espera > 0 ? `${espera} en lista de espera` : 'Sin lista de espera'));
+  box.appendChild(card);
+  void yaArranco;
+  return box;
+}
+
+/* ============================================================
+   El botón de la noche.
+   Regla del club: o se completa el cupo, o no hay escalera. Si no
+   se llena, se cancela y recepción ve con la gente qué hacer —
+   pero eso ya no lo organiza la app, y no reparte puntos.
+   ============================================================ */
+function renderComenzar(esc, confirmados, cupo, faltan, completo, refresh) {
+  const box = el('div', { class: 'mt-4' });
+
+  if (completo) {
+    box.appendChild(el('div', { class: 'aviso aviso-ok' }, [
+      el('strong', {}, 'Ya están todos. '),
+      'Cuando los tengas en cancha, dale Comenzar: se cierra la lista y la app reparte la ronda 1.',
+    ]));
+    box.appendChild(el('button', { class: 'btn btn-primary mt-3', onclick: async (e) => {
+      const ok = await confirmSheet({
+        title: '¿Comenzar la escalera?',
+        body: `Se cierra la convocatoria (ya nadie se puede anotar) y se arma la ronda 1 con los ${confirmados} jugadores. Hazlo cuando ya estén en cancha.`,
+        confirmLabel: 'Sí, comenzar',
+      });
+      if (!ok) return;
+      e.target.disabled = true; e.target.textContent = 'Arrancando…';
+      try {
+        const r = await comenzarEscalera(esc.id);
+        toast(`Listo: ${r.jugadores} jugadores en ${r.canchas} canchas.`, 'success');
+        refresh();
+      } catch (err) {
+        toast(humanizeError(err), 'error');
+        e.target.disabled = false; e.target.textContent = 'Comenzar escalera';
+      }
+    } }, 'Comenzar escalera'));
+    return box;
+  }
+
+  box.appendChild(el('div', { class: 'aviso aviso-warn' }, [
+    el('strong', {}, `Faltan ${faltan} para completar. `),
+    'La escalera solo arranca con el cupo lleno: se juega de 4 en 4 y con menos no se pueden armar las canchas. ',
+    'Agrega a quien llegue, o cancela la noche.',
+  ]));
+  box.appendChild(el('button', { class: 'btn btn-secondary mt-3', disabled: 'disabled' }, 'Comenzar escalera'));
+  box.appendChild(el('button', { class: 'btn btn-danger mt-2', onclick: async () => {
+    const motivo = await pedirMotivoCancelacion(confirmados, cupo);
+    if (motivo === null) return;
+    try {
+      await cancelarEscaleraAdmin(esc.id, motivo);
+      toast('Noche cancelada. Ya se les avisó a todos.', 'success');
+      refresh();
+    } catch (err) { toast(humanizeError(err), 'error'); }
+  } }, 'Cancelar la noche'));
+  return box;
+}
+
+function pedirMotivoCancelacion(confirmados, cupo) {
+  return new Promise((resolve) => {
+    const input = el('input', { class: 'input', type: 'text',
+      placeholder: 'Ej. no se completó el cupo', value: 'No se completó el cupo' });
+    const content = el('div', {}, [
+      el('div', { class: 'sheet-title' }, '¿Cancelar la noche?'),
+      el('p', { class: 'text-tiny mb-3' },
+        `Van ${confirmados} de ${cupo}. Al cancelar se libera a todos: nadie recibe penalización ni pierde puntos, y la app les avisa sola. No se puede deshacer.`),
+      el('div', { class: 'field' }, [el('label', {}, 'Motivo (lo van a ver los jugadores)'), input]),
+    ]);
+    const btnCancelar = el('button', { class: 'btn btn-ghost mt-3', onclick: () => { handle.close(); resolve(null); } }, 'Mejor no');
+    const btnOk = el('button', { class: 'btn btn-danger mt-2', onclick: () => {
+      handle.close(); resolve(input.value.trim() || 'No se completó el cupo');
+    } }, 'Sí, cancelar la noche');
+    content.appendChild(btnOk);
+    content.appendChild(btnCancelar);
+    const handle = openSheet(content, { onClose: () => resolve(null) });
+  });
+}
+
+/* ============================================================
+   Quién va — lista en vivo, con todo lo que recepción puede hacer.
+   ============================================================ */
+function renderRoster(esc, ws, registros, confirmados, enEspera, cupo, refresh) {
+  const box = el('div', {});
+  box.appendChild(el('div', { class: 'row-between' }, [
+    el('div', { class: 'section-title', style: 'margin-bottom:0;' }, 'Quién va'),
+    esc.status === 'scheduled'
+      ? el('button', { class: 'btn btn-secondary btn-sm', style: 'width:auto;',
+          onclick: () => abrirAgregarJugador(esc, ws, refresh) }, '+ Agregar')
+      : null,
+  ]));
+
+  const card = el('div', { class: 'card' });
+  const pintarFila = (r, i, extra) => {
+    if (i > 0) card.appendChild(el('hr', { class: 'sep', style: 'margin:10px 0;' }));
+    const st = REG_STATUS[r.status] || { text: r.status, cls: 'badge-neutral' };
+    card.appendChild(el('div', { class: 'row-between' }, [
+      el('div', {}, [
+        el('div', { style: 'font-weight:600;font-size:14px;' },
+          (r.profiles && r.profiles.full_name) || '(sin nombre)'),
+        el('div', { class: 'text-tiny' }, extra || (r.is_coach_substitute ? 'Sustituto — coach' : '')),
+      ]),
+      el('span', { class: `badge ${st.cls}` }, st.text),
+    ]));
+    if (['confirmed', 'substitute'].includes(r.status) && esc.status !== 'completed') {
+      card.appendChild(el('div', { class: 'btn-row mt-2' }, [
+        el('button', { class: 'btn btn-secondary btn-sm', onclick: () => abrirSustituto(r, refresh, ws.format) }, 'Sustituto'),
+        el('button', { class: 'btn btn-secondary btn-sm', onclick: async () => {
+          const ok = await confirmSheet({ title: '¿No se presentó?', body: 'Se le aplica la penalización de no-show del mes en curso.', confirmLabel: 'Sí, no vino', danger: true });
+          if (!ok) return;
+          try { await marcarNoShow(r.id); toast('Marcado como no-show.', 'success'); refresh(); }
+          catch (err) { toast(humanizeError(err), 'error'); }
+        } }, 'No vino'),
+        el('button', { class: 'btn btn-danger btn-sm', onclick: async () => {
+          const ok = await confirmSheet({ title: '¿Quitarlo de esta noche?', body: 'Se libera su lugar y, si hay lista de espera, entra el siguiente.', confirmLabel: 'Sí, quitar', danger: true });
+          if (!ok) return;
+          try { await cancelarRegistro(r.id); toast('Listo, ya no está en la lista.', 'success'); refresh(); }
+          catch (err) { toast(humanizeError(err), 'error'); }
+        } }, 'Quitar'),
+      ]));
+    }
+  };
+
+  if (!confirmados.length && !enEspera.length) {
+    card.appendChild(el('p', { class: 'text-muted' }, 'Todavía no se anota nadie.'));
+  }
+  confirmados.forEach((r, i) => pintarFila(r, i, r.partner_id ? 'Juega en pareja' : ''));
+  if (enEspera.length) {
+    card.appendChild(el('div', { class: 'text-tiny mt-3', style: 'text-transform:uppercase;letter-spacing:0.05em;color:var(--text-tertiary);' },
+      `Lista de espera (${enEspera.length})`));
+    enEspera.forEach((r, i) => pintarFila(r, i + 1, r.waitlist_position ? `Lugar ${r.waitlist_position} de la fila` : ''));
+  }
+  box.appendChild(card);
+  void cupo; void registros;
+  return box;
+}
+
+/* Recepción mete a alguien que llegó sin haberse anotado. */
+function abrirAgregarJugador(esc, ws, refresh) {
+  const content = el('div', {});
+  content.appendChild(el('div', { class: 'sheet-title' }, 'Agregar a la noche'));
+  content.appendChild(el('p', { class: 'text-tiny mb-3' },
+    ws.format === 'parejas'
+      ? 'En Parejas Fijas hay que agregar a los dos: busca al primero y luego a su pareja.'
+      : 'Busca al jugador que llegó. Queda confirmado de inmediato.'));
+
+  const buscador = el('input', { class: 'input', type: 'text', placeholder: 'Escribe un nombre…' });
+  const lista = el('div', { class: 'mt-2' });
+  const seleccion = { a: null, b: null };
+  const resumen = el('p', { class: 'text-tiny mt-2' });
+
+  const pintarResumen = () => {
+    if (ws.format !== 'parejas') { resumen.textContent = ''; return; }
+    resumen.textContent = `Pareja: ${seleccion.a ? seleccion.a.full_name : '—'} + ${seleccion.b ? seleccion.b.full_name : '—'}`;
+  };
+
+  const guardar = async (a, b) => {
+    try {
+      const r = await adminAgregarJugador(esc.id, a.id, b ? b.id : null);
+      toast(r && r.mensaje ? r.mensaje : 'Listo, ya está en la lista.', 'success');
+      handle.close();
+      refresh();
+    } catch (err) { toast(humanizeError(err), 'error'); }
+  };
+
+  const elegir = (p) => {
+    if (ws.format !== 'parejas') { guardar(p, null); return; }
+    if (!seleccion.a) seleccion.a = p;
+    else if (p.id !== seleccion.a.id) seleccion.b = p;
+    pintarResumen();
+    if (seleccion.a && seleccion.b) guardar(seleccion.a, seleccion.b);
+  };
+
+  let timer = null;
+  buscador.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const q = buscador.value.trim();
+      lista.innerHTML = '';
+      if (q.length < 2) return;
+      const gente = await buscarJugadores(q, 8);
+      if (!gente.length) { lista.appendChild(el('p', { class: 'text-tiny' }, 'Nadie con ese nombre.')); return; }
+      gente.forEach((p) => lista.appendChild(el('div', {
+        class: 'fila-enlace', onclick: () => elegir(p),
+      }, p.full_name || '(sin nombre)')));
+    }, 250);
+  });
+
+  content.appendChild(buscador);
+  content.appendChild(resumen);
+  content.appendChild(lista);
+  const handle = openSheet(content);
 }
 
 function nombreEquipo(m, prefix) {
@@ -316,135 +554,7 @@ function construirSets(set1, set2, set3) {
   return sets;
 }
 
-/* ============================================================
-   Cupo incompleto. La app no opina hasta que faltan pocas horas
-   (por defecto 6): antes de eso conviene dejar que la lista de
-   espera llene los huecos sola. Cuando llega el momento sugiere
-   por canchas completas — 4 jugadores = 1 cancha — pero la
-   decisión siempre la toma el admin, nunca el sistema.
-   ============================================================ */
-const AVISO_POR_ACCION = {
-  completo: 'aviso-ok',
-  esperar: 'aviso-neutral',
-  reducir: 'aviso-warn',
-  cancelar: 'aviso-danger',
-  na: 'aviso-neutral',
-};
-
-function renderPanelCupo(esc, rec, refresh) {
-  const box = el('div', { class: 'mt-4' });
-  box.appendChild(el('div', { class: 'section-title', style: 'margin-top:0;' }, 'Cupo de la noche'));
-
-  const card = el('div', { class: 'card' });
-  card.appendChild(el('div', { class: 'grid-3' }, [
-    el('div', { class: 'stat-tile' }, [
-      el('div', { class: 'stat-value' }, String(rec.confirmados)),
-      el('div', { class: 'stat-label' }, `de ${rec.capacidad || 12}`),
-    ]),
-    el('div', { class: 'stat-tile' }, [
-      el('div', { class: 'stat-value' }, String(rec.en_lista_espera)),
-      el('div', { class: 'stat-label' }, 'Esperando'),
-    ]),
-    el('div', { class: 'stat-tile' }, [
-      el('div', { class: 'stat-value' }, `${Number(rec.horas_faltantes) > 0 ? Number(rec.horas_faltantes).toFixed(0) : 0}h`),
-      el('div', { class: 'stat-label' }, 'Para empezar'),
-    ]),
-  ]));
-
-  card.appendChild(el('div', { class: `aviso ${AVISO_POR_ACCION[rec.accion] || 'aviso-neutral'} mt-4` }, [
-    el('strong', {}, rec.titulo + ' '),
-    rec.detalle,
-  ]));
-
-  if (rec.accion === 'na' || rec.accion === 'completo') {
-    box.appendChild(card);
-    return box;
-  }
-
-  card.appendChild(el('p', { class: 'text-tiny mt-3', style: 'color:var(--text-tertiary);' },
-    `Ahorita está configurada con ${rec.canchas_actuales} cancha(s). Tú decides: la sugerencia es solo una ayuda.`));
-
-  const fila = el('div', { class: 'stack gap-2 mt-3' });
-
-  // Mientras todavía falta tiempo, las acciones quedan guardadas detrás de
-  // un toque. No es para esconderlas: es para que la pantalla no empuje a
-  // recortar canchas cuando la lista de espera todavía puede llenar el cupo.
-  if (rec.accion === 'esperar') {
-    fila.style.display = 'none';
-    const verMas = el('button', {
-      class: 'btn btn-ghost btn-sm mt-2',
-      onclick: () => {
-        fila.style.display = '';
-        verMas.remove();
-      },
-    }, 'Ajustar canchas o cancelar de todos modos');
-    card.appendChild(verMas);
-  }
-  for (let n = 1; n <= (rec.canchas_maximas || 3); n++) {
-    if (n === rec.canchas_actuales) continue;
-    const sugerida = n === rec.canchas_sugeridas;
-    const btn = el('button', { class: `btn btn-sm ${sugerida ? 'btn-primary' : 'btn-secondary'}` },
-      `Jugar con ${n} cancha${n > 1 ? 's' : ''}${sugerida ? ' · sugerido' : ''}`);
-    btn.addEventListener('click', async () => {
-      const ok = await confirmSheet({
-        title: `¿Jugar con ${n} cancha${n > 1 ? 's' : ''}?`,
-        body: 'Se le avisa automáticamente a todos los jugadores confirmados. Su lugar no se pierde.',
-        confirmLabel: 'Sí, ajustar',
-      });
-      if (!ok) return;
-      try { await ajustarCanchas(esc.id, n, true); toast('Listo, y ya se les avisó a los jugadores.', 'success'); refresh(); }
-      catch (err) { toast(humanizeError(err), 'error', 6000); }
-    });
-    fila.appendChild(btn);
-  }
-
-  const btnCancelar = el('button', { class: 'btn btn-danger btn-sm' },
-    rec.accion === 'cancelar' ? 'Cancelar la sesión · sugerido' : 'Cancelar la sesión');
-  btnCancelar.addEventListener('click', async () => {
-    const ok = await confirmSheet({
-      title: '¿Cancelar la sesión de esta noche?',
-      body: 'Se libera a todos los registrados sin penalización, nadie pierde puntos y se les avisa automáticamente. Esto no se puede deshacer desde la app.',
-      confirmLabel: 'Sí, cancelar la sesión',
-      danger: true,
-    });
-    if (!ok) return;
-    try {
-      await cancelarEscaleraAdmin(esc.id, 'No se junto el cupo minimo');
-      toast('Sesión cancelada y jugadores avisados.', 'success');
-      refresh();
-    } catch (err) { toast(humanizeError(err), 'error', 6000); }
-  });
-  fila.appendChild(btnCancelar);
-  card.appendChild(fila);
-
-  box.appendChild(card);
-  return box;
-}
-
-/* ============================================================
-   Tres modos de sustituto, porque no son la misma situación:
-   - Normal: el ausente conserva 66% y el sustituto gana 34%.
-   - Coach: nadie gana puntos y el ausente sí recibe su penalización.
-   - Emergencia autorizada: el sustituto se lleva 100% y el ausente no
-     recibe puntos NI penalización. Es el único que funciona en Parejas
-     Fijas, justo para que el compañero del ausente no se quede sin jugar.
-   ============================================================ */
-const MODOS_SUSTITUTO = [
-  {
-    key: 'normal', etiqueta: 'Reparto normal (66% / 34%)',
-    info: 'El sustituto recibe el 34% de los puntos ganados y el ausente conserva el 66%. No hay penalización por tiempo.',
-  },
-  {
-    key: 'coach', etiqueta: 'Coach del club cubriendo',
-    info: 'El coach no acumula puntos del club y el ausente recibe la penalización completa según el tiempo de aviso, igual que si no hubiera conseguido sustituto.',
-  },
-  {
-    key: 'emergencia', etiqueta: 'Emergencia autorizada — sin reparto',
-    info: 'Para emergencias reales (médicas, etc.). El sustituto se lleva el 100% de lo que gane porque sí jugó, y al ausente esa noche no le cuenta: cero puntos y cero penalización. Es el único modo que funciona en Parejas Fijas, para que su compañero no se quede sin jugar.',
-  },
-];
-
-async function abrirSustituto(registro, onChange, formato) {
+function abrirSustituto(registro, onChange, formato) {
   const content = el('div');
   content.appendChild(el('div', { class: 'sheet-title' }, 'Asignar sustituto'));
 

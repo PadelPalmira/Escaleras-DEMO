@@ -243,9 +243,36 @@ function liquidarVentana(escId) {
   return true;
 }
 
+/* ============================================================
+   El domingo del club
+   ------------------------------------------------------------
+   En la app real una tarea automatica recalcula las categorias el
+   domingo a las 9am. Aqui no hay servidor que la dispare, asi que
+   se revisa cada vez que se pide algo: si el reloj de la demo ya
+   paso ese momento y esa semana no tiene categorias, se corre.
+   Es lo que permite VER el ascenso y el descenso moviendo el
+   reloj, sin esperar al domingo.
+   ============================================================ */
+function correrDomingoSiToca() {
+  const ahora = DEMO.ahora();
+  const hoy = fechaClub(ahora);
+  // El domingo mas reciente que ya paso (si hoy es domingo, hoy mismo).
+  const domingo = sumarDias(hoy, -new Date(hoy + 'T12:00:00Z').getUTCDay());
+  if (ahora < instanteClub(domingo, '09:00')) return;
+  if (DB.category_snapshots.some((c) => c.week_start_date === domingo)) return;
+
+  const mov = motor.recalcularCategorias(DB, domingo, () => DEMO.ahora());
+  (mov.suben || []).forEach((id) => notificar(id, 'cambio_categoria', 'Subiste a Categoría A',
+    'Quedaste entre los mejores de B esta semana, así que subes a Categoría A. Tus convocatorias de esta semana ya son las de A.', null));
+  (mov.bajan || []).forEach((id) => notificar(id, 'cambio_categoria', 'Bajaste a Categoría B',
+    'Esta semana quedaste en los últimos lugares de A, así que bajas a Categoría B. Se sube ganando: los primeros de B suben cada domingo.', null));
+  persistir();
+}
+
 /* ---------- mis_convocatorias(int) ---------- */
 
 function misConvocatorias(uid) {
+  correrDomingoSiToca();
   const hoy = todayPlus(0);
   const hasta = todayPlus(9);
   const miCat = catEfectivaDe(uid);
@@ -321,6 +348,14 @@ function registrarJugadorMock(params) {
   const ventaja = tengoVentaja(params.p_player_id, esc);
   const topN = cfg('privilege_top_n', 12);
 
+  // La convocatoria cierra cuando el Admin le da "Comenzar escalera", no
+  // cuando el reloj marca la hora de inicio.
+  if (esc.status !== 'scheduled') {
+    return { data: null, error: { message: 'Esa noche ya arrancó: recepción ya cerró la lista. Habla con ellos si todavía hay lugar.' } };
+  }
+  if (esc.session_date < fechaClub(DEMO.ahora())) {
+    return { data: null, error: { message: 'Esa noche ya pasó.' } };
+  }
   if (DEMO.ahora() < v.abre && !soyAdmin) {
     return { data: null, error: { message: 'La convocatoria de esta semana todavía no abre. Abre el domingo a las 10:00 am.' } };
   }
@@ -578,28 +613,103 @@ function recomendacionCupoMock(escId) {
   const chequeo = cfg('cupo_check_hours_before', 6);
   const yaToca = horas <= chequeo;
   const maximas = ws.courts || 3;
+  const faltan = capacidad - confirmados;
   const base = {
     confirmados, capacidad, canchas_actuales: esc ? (esc.courts_active || maximas) : maximas,
     canchas_maximas: maximas, en_lista_espera: enEsperaDe(escId).length,
-    horas_faltantes: horas, ya_toca_decidir: yaToca,
-    canchas_sugeridas: Math.min(Math.max(Math.floor(confirmados / 4), 0), maximas),
+    horas_faltantes: horas, ya_toca_decidir: yaToca, canchas_sugeridas: maximas,
   };
   if (ws.format === 'retas_abiertas') {
-    return { ...base, accion: 'na', canchas_sugeridas: base.canchas_actuales, titulo: 'Retas Abiertas', detalle: 'Formato libre, sin cupo: no aplica revisión de canchas.' };
+    return { ...base, accion: 'na', canchas_sugeridas: base.canchas_actuales,
+      titulo: 'Retas Abiertas', detalle: 'Formato libre, sin cupo: no aplica revisión de canchas.' };
   }
   if (confirmados >= capacidad) {
-    return { ...base, accion: 'completo', canchas_sugeridas: maximas, titulo: 'Cupo completo', detalle: `Están los ${confirmados} lugares llenos. Se juega normal con ${maximas} canchas.` };
+    return { ...base, accion: 'completo', titulo: 'Cupo completo',
+      detalle: `Están los ${confirmados} lugares llenos. En cuanto todos estén en cancha, dale "Comenzar escalera".` };
   }
   if (!yaToca) {
-    return { ...base, accion: 'esperar', canchas_sugeridas: base.canchas_actuales, titulo: 'Todavía hay tiempo', detalle: `Van ${confirmados} de ${capacidad} y faltan ${horas} h. La app te avisa cuando falten ${chequeo} h para que decidas.` };
+    return { ...base, accion: 'esperar', titulo: `Van ${confirmados} de ${capacidad}`,
+      detalle: `Faltan ${faltan} y todavía quedan ${horas} h. Dale chance a la lista de espera; la app te vuelve a avisar cuando falten ${chequeo} h.` };
   }
-  if (confirmados >= 8) {
-    return { ...base, accion: 'reducir', titulo: 'Sugerencia: jugar con 2 canchas', detalle: `Hay ${confirmados} confirmados. Alcanza para 2 canchas completas. Si prefieres esperar o abrir la tercera, tú decides.` };
+  // Regla del club: o se completa el cupo, o no hay escalera.
+  return { ...base, accion: 'cancelar', titulo: `Faltan ${faltan} para completar`,
+    detalle: `Van ${confirmados} de ${capacidad} y ya falta poco para la hora. Si no se completa, cancela la noche: la escalera solo arranca con el cupo lleno. Al cancelar nadie recibe penalización ni pierde puntos, y se les avisa a todos automáticamente.` };
+}
+
+/* ---------- comenzar_escalera ---------- */
+
+function comenzarEscaleraMock(escId) {
+  const e = DB.escaleras.find((x) => x.id === escId);
+  if (!e) throw new Error('Convocatoria no encontrada.');
+  const ws = wsById(e.weekday_schedule_id) || {};
+  if (e.format === 'retas_abiertas') throw new Error('Las Retas Abiertas no se arrancan desde aquí: son libres y no reparten puntos.');
+  if (e.status === 'cancelled') throw new Error('Esta noche está cancelada.');
+  if (e.status === 'completed') throw new Error('Esta noche ya se cerró.');
+  if (e.status === 'in_progress') throw new Error('Esta noche ya está en juego.');
+
+  const cap = ws.capacity != null ? ws.capacity : 12;
+  const conf = ocupadosDe(escId);
+  const espera = enEsperaDe(escId).length;
+  if (conf < cap) {
+    throw new Error(`Van ${conf} de ${cap} lugares: faltan ${cap - conf}. La escalera solo arranca con el cupo completo — si no se llena, cancela la noche.`);
   }
-  if (confirmados >= 4) {
-    return { ...base, accion: 'reducir', titulo: 'Sugerencia: jugar con 1 cancha', detalle: `Hay ${confirmados} confirmados. Solo alcanza para 1 cancha completa. Puedes jugar así o cancelar la noche.` };
+
+  const roundId = motor.generarRondaInicial(DB, escId, ctx());
+
+  // Quien quedó en lista de espera ya no alcanzó lugar esta noche.
+  DB.escalera_registrations
+    .filter((r) => r.escalera_id === escId && r.status === 'waitlist')
+    .forEach((r) => { r.status = 'cancelled_ontime'; r.cancelled_at = DEMO.ahora().toISOString(); });
+
+  persistir();
+  return { escalera_id: escId, round_id: roundId, jugadores: conf, canchas: conf / 4, lista_espera_liberada: espera };
+}
+
+/* ---------- admin_agregar_jugador ---------- */
+
+function adminAgregarJugadorMock(escId, playerId, partnerId) {
+  const e = DB.escaleras.find((x) => x.id === escId);
+  if (!e) throw new Error('Convocatoria no encontrada.');
+  const ws = wsById(e.weekday_schedule_id) || {};
+  if (e.status !== 'scheduled') throw new Error('Esa noche ya arrancó o ya se cerró: ya no se puede agregar gente.');
+  if (e.format === 'retas_abiertas') throw new Error('Retas Abiertas es libre: no hace falta agregar a nadie.');
+  if (e.format === 'parejas' && !partnerId) throw new Error('En Parejas Fijas hay que agregar a los dos: falta el compañero.');
+  if (e.format === 'individual' && partnerId) throw new Error('El formato Individual no usa compañero.');
+  if (DB.escalera_registrations.some((r) => r.escalera_id === escId && r.player_id === playerId && ACTIVOS.includes(r.status))) {
+    throw new Error('Esa persona ya está en la lista de esta noche.');
   }
-  return { ...base, accion: 'cancelar', canchas_sugeridas: 0, titulo: 'Sugerencia: cancelar la sesión', detalle: `Solo hay ${confirmados} confirmados: no alcanza ni para una cancha. Si cancelas, a nadie se le penaliza y se avisa a todos automáticamente.` };
+  const perfil = DB.profiles.find((p) => p.id === playerId);
+  if (perfil && perfil.status === 'suspended') throw new Error('Esa cuenta está suspendida.');
+
+  const cap = ws.capacity != null ? ws.capacity : 12;
+  const necesita = e.format === 'parejas' ? 2 : 1;
+  const conf = ocupadosDe(escId);
+  if (conf + necesita > cap) throw new Error(`Ya están los ${cap} lugares llenos. Primero quita a alguien.`);
+
+  const ahora = DEMO.ahora().toISOString();
+  const id = nuevoRegId();
+  DB.escalera_registrations.push({
+    id, escalera_id: escId, player_id: playerId, partner_id: partnerId || null,
+    partner_status: partnerId ? 'accepted' : null, status: 'confirmed',
+    via_privilegio: false, created_at: ahora, confirmed_at: ahora,
+  });
+  if (partnerId) {
+    DB.escalera_registrations.push({
+      id: nuevoRegId(), escalera_id: escId, player_id: partnerId, partner_id: playerId,
+      partner_status: 'accepted', status: 'confirmed',
+      via_privilegio: false, created_at: ahora, confirmed_at: ahora,
+    });
+  }
+  notificar(playerId, 'promocion_lista_espera', 'Recepción te anotó para esta noche',
+    `Te agregaron a la convocatoria del ${e.session_date.slice(8)}/${e.session_date.slice(5, 7)}. Ya tienes lugar confirmado.`, escId);
+  if (partnerId) {
+    notificar(partnerId, 'promocion_lista_espera', 'Recepción los anotó para esta noche',
+      `Los agregaron como pareja a la convocatoria del ${e.session_date.slice(8)}/${e.session_date.slice(5, 7)}.`, escId);
+  }
+  recalcularEspera(escId);
+  persistir();
+  return { registration_id: id, resultado: 'confirmed',
+    mensaje: `${(perfil && perfil.full_name) || 'El jugador'} quedó confirmado. Van ${conf + necesita} de ${cap}.` };
 }
 
 /* ---------- mi_carrera_liguilla ---------- */
@@ -780,6 +890,9 @@ function avanzarLiguilla(ev, m) {
   return 'ok';
 }
 function makeQuery(table) {
+  // El "domingo" de la demo se dispara con cualquier lectura, no solo con
+  // Convocatorias: asi el Ranking tambien se ve recalculado.
+  if (table === 'category_snapshots' || table === 'escaleras') correrDomingoSiToca();
   const filters = [];
   let mode = 'multi';
   let updateFields = null;
@@ -1025,6 +1138,13 @@ export function createClient() {
         reg.cancelled_at = DEMO.ahora().toISOString();
         reg.cubierto_por_lista_espera = true;
         return { data: id, error: null };
+      }
+      if (name === 'comenzar_escalera') {
+        return envolver(() => comenzarEscaleraMock(params.p_escalera_id));
+      }
+      if (name === 'admin_agregar_jugador') {
+        return envolver(() => [adminAgregarJugadorMock(
+          params.p_escalera_id, params.p_player_id, params.p_partner_id || null)]);
       }
       if (name === 'recomendacion_cupo') {
         return { data: [recomendacionCupoMock(params.p_escalera_id)], error: null };

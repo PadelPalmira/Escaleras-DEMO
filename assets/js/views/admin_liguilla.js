@@ -1,4 +1,4 @@
-import { el, formatFecha, toast, humanizeError, openSheet, confirmSheet } from '../utils.js';
+import { el, formatFecha, toast, humanizeError, openSheet, confirmSheet, ahora } from '../utils.js';
 import { icon } from '../icons.js';
 import {
   getMyProfile, esAdminOMaestro,
@@ -68,7 +68,7 @@ async function pintarLista(wrap) {
 function abrirCrearEvento(wrap) {
   const content = el('div');
   content.appendChild(el('div', { class: 'sheet-title' }, 'Nueva edición de Liguilla/Ascenso'));
-  const hoy = new Date();
+  const hoy = ahora();
   const monthDefault = `${hoy.getUTCFullYear()}-${String(hoy.getUTCMonth() + 1).padStart(2, '0')}`;
   const monthInput = el('input', { class: 'input', type: 'text', value: monthDefault, placeholder: 'AAAA-MM' });
   const tierSelect = el('select', { class: 'input' }, [

@@ -1,4 +1,4 @@
-import { el, initials, formatFecha, formatFechaHora, formatPuntos, toast, humanizeError } from '../utils.js';
+import { el, initials, formatFecha, formatFechaHora, formatPuntos, toast, humanizeError, ahora } from '../utils.js';
 import { icon } from '../icons.js';
 import { navigate } from '../router.js';
 import {
@@ -78,7 +78,7 @@ export async function renderPerfil() {
       const row = el('div', {
         class: 'row-between',
         style: n.read_at ? 'opacity:0.55;' : '',
-        onclick: async () => { if (!n.read_at) { try { await marcarNotificacionLeida(n.id); n.read_at = new Date().toISOString(); row.style.opacity = '0.55'; dot && dot.remove(); } catch (err) { toast(humanizeError(err), 'error'); } } },
+        onclick: async () => { if (!n.read_at) { try { await marcarNotificacionLeida(n.id); n.read_at = ahora().toISOString(); row.style.opacity = '0.55'; dot && dot.remove(); } catch (err) { toast(humanizeError(err), 'error'); } } },
       }, [
         el('div', {}, [
           el('div', { style: 'font-weight:600;font-size:13.5px;' }, n.title),
@@ -136,7 +136,7 @@ export async function renderPerfil() {
     const list = el('div', { class: 'card' });
     suspensiones.forEach((s, i) => {
       if (i > 0) list.appendChild(el('hr', { class: 'sep', style: 'margin:10px 0;' }));
-      const hoy = new Date().toISOString().slice(0, 10);
+      const hoy = ahora().toISOString().slice(0, 10);
       const activa = !s.lifted_at && (!s.end_date || s.end_date >= hoy);
       list.appendChild(el('div', { class: 'row-between' }, [
         el('div', {}, [

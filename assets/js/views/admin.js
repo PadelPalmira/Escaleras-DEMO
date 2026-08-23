@@ -27,23 +27,23 @@ export async function renderAdmin() {
 
   const wrap = el('div');
   wrap.appendChild(el('div', { class: 'h1 mb-2' }, 'Admin'));
-  wrap.appendChild(el('p', { class: 'text-muted' }, 'Captura resultados, gestiona jugadores y la Liguilla.'));
+  wrap.appendChild(el('p', { class: 'text-muted' }, 'Todo lo del club en un solo lugar.'));
 
   wrap.appendChild(menuCard({
-    titulo: 'Resultados de escaleras',
-    descripcion: 'Captura marcadores ronda por ronda, genera la siguiente ronda y cierra la noche.',
+    titulo: 'Noches del club',
+    descripcion: 'Quién se anotó, comenzar la noche, capturar los marcadores y cerrarla.',
     iconoSvg: icon.racket,
     path: '/admin/escaleras',
   }));
   wrap.appendChild(menuCard({
-    titulo: 'Liguilla / Torneo de Ascenso',
-    descripcion: 'Crea el evento del mes, califica jugadores, arranca el draft y captura el bracket.',
+    titulo: 'Liguilla del mes',
+    descripcion: 'Calificados, draft y el cuadro del torneo.',
     iconoSvg: icon.trophy,
     path: '/admin/liguilla',
   }));
   wrap.appendChild(menuCard({
     titulo: 'Jugadores',
-    descripcion: 'Busca a un jugador para asignar sustituto, aplicar una multa o una suspensión.',
+    descripcion: 'Busca a alguien para ponerle sustituto, una multa o una suspensión.',
     iconoSvg: icon.user,
     path: '/admin/jugadores',
   }));

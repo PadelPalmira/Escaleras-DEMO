@@ -147,6 +147,19 @@ export function generarRondaInicial(db, escaleraId, { rnd, ahora }) {
     throw new Error('Esta escalera ya tiene la ronda 1 generada.');
   }
 
+  // El pádel se juega de 4 en 4. Sin esta guarda, con 10 confirmados se
+  // creaba una cancha con 2 jugadores contra nadie que además repartía
+  // puntos al ranking.
+  const ws = db.weekday_schedule.find((w) => w.id === esc.weekday_schedule_id) || {};
+  const nConf = db.escalera_registrations.filter(
+    (r) => r.escalera_id === escaleraId && (r.status === 'confirmed' || r.status === 'substitute')).length;
+  if (nConf === 0 || nConf % 4 !== 0) {
+    throw new Error(`No se puede armar la noche con ${nConf} jugador(es): se juega de 4 en 4. Completa el cupo o cancela la sesión.`);
+  }
+  if (ws.capacity != null && nConf !== ws.capacity) {
+    throw new Error(`Van ${nConf} de ${ws.capacity} lugares. La escalera solo arranca con el cupo completo.`);
+  }
+
   const roundId = nuevoId(db, 'rd');
   db.rounds.push({
     id: roundId, escalera_id: escaleraId, round_number: 1,
@@ -217,6 +230,13 @@ export function generarSiguienteRonda(db, escaleraId, { ahora }) {
 
   const maxCancha = Math.max(...partidos.map((m) => m.court_number));
   const nuevoNum = actual.round_number + 1;
+
+  // Tope de rondas. Antes no lo revisaba nadie y se podían generar la ronda
+  // 8, 9, 10… cada una repartiendo puntos que sí contaban para el ranking.
+  const tope = cfgNum(db, 'max_rondas_escalera', 7);
+  if (nuevoNum > tope) {
+    throw new Error(`Esta noche ya llegó a sus ${tope} rondas, que es el máximo configurado. Si quieren jugar más, la dirección del club puede subir el número en Configuración (max_rondas_escalera).`);
+  }
 
   // tmp_arrivals: cada equipo se mueve a su cancha destino.
   const llegadas = [];
@@ -599,4 +619,125 @@ export function rngDesde(semilla) {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+/* ============================================================
+   recalcular_categorias_globales(week_start)
+   ------------------------------------------------------------
+   Ascenso y descenso, como el futbol. Cada categoría conserva su
+   gente y solo se mueven los de las orillas: bajan los últimos N
+   de A y suben los primeros N de B.
+
+   Antes se volvía a partir el club a la mitad cada domingo, y con
+   los de en medio tan pegados cambiaba de categoría casi un
+   tercio del club cada semana.
+   ============================================================ */
+export function recalcularCategorias(db, lunes, ahora) {
+  const banda = cfgNum(db, 'zona_limite_band_size', 3);
+  const n = cfgNum(db, 'ascenso_descenso_por_semana', 2);
+  const pv = puntosVivos(db);
+  const cuando = (ahora ? ahora() : new Date()).toISOString();
+
+  // Categoría con la que venía cada quien: el snapshot más reciente ANTES
+  // de esta semana.
+  const previas = new Map();
+  db.category_snapshots
+    .filter((c) => c.week_start_date < lunes)
+    .sort((a, b) => (a.week_start_date < b.week_start_date ? -1 : a.week_start_date > b.week_start_date ? 1 : 0))
+    .forEach((c) => {
+      const cat = c.category === 'limite' ? (c.zona_limite_side === 'bottom_a' ? 'A' : 'B') : c.category;
+      previas.set(c.player_id, cat);
+    });
+
+  const nivelDeA = ['2da_varonil', '3ra_varonil', '4ta_varonil', '5ta_varonil'];
+
+  // Primera vez que corre en el club: se parte por la mediana, una sola vez.
+  if (previas.size === 0) {
+    const orden = pv.slice().sort((a, b) =>
+      b.rolling_points - a.rolling_points || ordenId(a.player_id, b.player_id));
+    const total = orden.length;
+    const corte = Math.ceil(total / 2);
+    orden.forEach((r, i) => {
+      const rnk = i + 1;
+      const enA = rnk <= corte;
+      ponerSnapshot(db, {
+        player_id: r.player_id, week_start_date: lunes,
+        rolling_points: r.rolling_points, escaleras_counted: r.escaleras_contadas,
+        rank: rnk, total_active_players: total, category: enA ? 'A' : 'B',
+        zona_limite_side: enA && rnk > corte - banda ? 'bottom_a'
+          : (!enA && rnk <= corte + banda ? 'top_b' : null),
+        source: 'rolling_window', computed_at: cuando,
+      });
+    });
+    db.profiles
+      .filter((p) => p.status === 'active' && p.declared_level && !pv.some((x) => x.player_id === p.id))
+      .forEach((p) => ponerSnapshot(db, {
+        player_id: p.id, week_start_date: lunes, rolling_points: 0, escaleras_counted: 0,
+        rank: null, total_active_players: null,
+        category: nivelDeA.includes(p.declared_level) ? 'A' : 'B',
+        zona_limite_side: null, source: 'bootstrap_declared', computed_at: cuando,
+      }));
+    return { suben: [], bajan: [] };
+  }
+
+  // Punto de partida: cada quien con la categoría que traía.
+  const filas = db.profiles
+    .filter((p) => p.status === 'active' && (previas.has(p.id) || p.declared_level))
+    .map((p) => {
+      const v = pv.find((x) => x.player_id === p.id);
+      return {
+        player_id: p.id,
+        cat: previas.get(p.id) || (nivelDeA.includes(p.declared_level) ? 'A' : 'B'),
+        pts: v ? v.rolling_points : 0,
+        n: v ? v.escaleras_contadas : 0,
+        nuevo: !previas.has(p.id),
+      };
+    });
+
+  const sizeA = filas.filter((f) => f.cat === 'A').length;
+  const sizeB = filas.filter((f) => f.cat === 'B').length;
+  const elegA = filas.filter((f) => f.cat === 'A' && f.n > 0);
+  const elegB = filas.filter((f) => f.cat === 'B' && f.n > 0);
+
+  // Si una categoría se hizo más grande, ese domingo se mueve uno extra
+  // hacia la más chica para volver a emparejarlas.
+  let bajan = n, suben = n;
+  if (sizeA - sizeB >= 2) bajan = n + 1;
+  if (sizeB - sizeA >= 2) suben = n + 1;
+  bajan = Math.max(Math.min(bajan, elegA.length - 1), 0);
+  suben = Math.max(Math.min(suben, elegB.length - 1), 0);
+
+  const queBajan = elegA.slice()
+    .sort((a, b) => a.pts - b.pts || ordenId(a.player_id, b.player_id)).slice(0, bajan);
+  const queSuben = elegB.slice()
+    .sort((a, b) => b.pts - a.pts || ordenId(a.player_id, b.player_id)).slice(0, suben);
+  queBajan.forEach((f) => { f.cat = 'B'; });
+  queSuben.forEach((f) => { f.cat = 'A'; });
+
+  ['A', 'B'].forEach((cat) => {
+    const dela = filas.filter((f) => f.cat === cat)
+      .sort((a, b) => b.pts - a.pts || ordenId(a.player_id, b.player_id));
+    const enCat = dela.length;
+    dela.forEach((f, i) => {
+      const rnk = i + 1;
+      ponerSnapshot(db, {
+        player_id: f.player_id, week_start_date: lunes,
+        rolling_points: f.pts, escaleras_counted: f.n,
+        rank: rnk, total_active_players: enCat, category: cat,
+        zona_limite_side: cat === 'A' && f.n > 0 && rnk > enCat - banda ? 'bottom_a'
+          : (cat === 'B' && f.n > 0 && rnk <= banda ? 'top_b' : null),
+        source: f.nuevo ? 'bootstrap_declared' : 'ascenso_descenso',
+        computed_at: cuando,
+      });
+    });
+  });
+
+  return { suben: queSuben.map((f) => f.player_id), bajan: queBajan.map((f) => f.player_id) };
+}
+
+export function ponerSnapshot(db, fila) {
+  const i = db.category_snapshots.findIndex(
+    (c) => c.player_id === fila.player_id && c.week_start_date === fila.week_start_date);
+  if (i >= 0) db.category_snapshots[i] = { ...db.category_snapshots[i], ...fila };
+  else db.category_snapshots.push({ id: nuevoId(db, 'cs'), ...fila });
 }

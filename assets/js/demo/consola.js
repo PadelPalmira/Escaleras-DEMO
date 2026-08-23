@@ -38,11 +38,13 @@ function momentosDeLaSemana() {
   const lunes = db.__lunes_demo || fechaClub(DEMO.ahora());
   const domingo = sumarDias(lunes, -1);
   return [
+    { etiqueta: 'Domingo 9:05 am', pista: 'se recalculan las categorías', fecha: domingo, hora: '09:05' },
     { etiqueta: 'Domingo 11:00 am', pista: 'ventana del top 12 abierta', fecha: domingo, hora: '11:00' },
     { etiqueta: 'Domingo 7:00 pm', pista: 'ya cerró: abierto a todos', fecha: domingo, hora: '19:00' },
     { etiqueta: 'Lunes 8:05 pm', pista: 'noche de Individual A', fecha: lunes, hora: '20:05' },
     { etiqueta: 'Miércoles 2:00 pm', pista: '6 h antes: revisar cupo', fecha: sumarDias(lunes, 2), hora: '14:00' },
     { etiqueta: 'Miércoles 8:05 pm', pista: 'noche de Parejas Fijas A', fecha: sumarDias(lunes, 2), hora: '20:05' },
+    { etiqueta: 'Domingo que viene 9:05 am', pista: 'suben 2 y bajan 2 de categoría', fecha: sumarDias(lunes, 6), hora: '09:05' },
   ];
 }
 

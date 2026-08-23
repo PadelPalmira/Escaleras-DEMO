@@ -1,4 +1,4 @@
-import { el, formatFecha, initials, toast, humanizeError, confirmSheet } from '../utils.js';
+import { el, formatFecha, initials, toast, humanizeError, confirmSheet, ahora } from '../utils.js';
 import { icon } from '../icons.js';
 import {
   getMyProfile, getMiCategoria, tiersElegiblesPorCategoria, getEventoLiguillaActivo,
@@ -217,7 +217,7 @@ async function renderCarreraDelMes(tier, eventoMes, profile, onChange) {
 }
 
 function diasRestantes(fechaISO) {
-  const hoy = new Date(new Date().toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' }) + 'T00:00:00Z');
+  const hoy = new Date(ahora().toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' }) + 'T00:00:00Z');
   const dia = new Date(fechaISO + 'T00:00:00Z');
   const dias = Math.round((dia - hoy) / 86400000);
   if (dias < 0) return 'Ya se jugó.';

@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient.js';
-import { todayISO } from './utils.js';
+import { todayISO, ahora } from './utils.js';
 
 /* ============================================================
    Sesión / perfil
@@ -330,7 +330,7 @@ export async function getMiCarreraLiguilla(tier, playerId = null) {
 
 /** El evento del mes en curso para un tier (si ya está programado). */
 export async function getEventoLiguillaDelMes(tier, monthKey = null) {
-  const mes = monthKey || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' }).slice(0, 7);
+  const mes = monthKey || ahora().toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' }).slice(0, 7);
   const { data, error } = await supabase
     .from('liguilla_events').select('*').eq('tier', tier).eq('month_key', mes).maybeSingle();
   if (error) throw error;
@@ -481,7 +481,7 @@ export async function aplicarMulta(playerId, amountMxn, reason, escaleraId = nul
 
 export async function marcarMultaEstado(fineId, status) {
   const fields = { status };
-  if (status === 'paid') fields.paid_at = new Date().toISOString();
+  if (status === 'paid') fields.paid_at = ahora().toISOString();
   const { error } = await supabase.from('fines').update(fields).eq('id', fineId);
   if (error) throw error;
 }
@@ -506,7 +506,7 @@ export async function aplicarSuspension(playerId, startDate, endDate, reason) {
 }
 
 export async function levantarSuspension(suspensionId, playerId) {
-  const { error } = await supabase.from('suspensions').update({ lifted_at: new Date().toISOString() }).eq('id', suspensionId);
+  const { error } = await supabase.from('suspensions').update({ lifted_at: ahora().toISOString() }).eq('id', suspensionId);
   if (error) throw error;
   await supabase.from('profiles').update({ status: 'active', suspended_until: null }).eq('id', playerId);
 }
@@ -525,7 +525,7 @@ export async function getSuspensionesAdmin() {
    ============================================================ */
 
 export async function getEscalerasAdmin() {
-  const desde = new Date();
+  const desde = ahora();
   desde.setUTCDate(desde.getUTCDate() - 14);
   const { data, error } = await supabase
     .from('escaleras')
@@ -535,6 +535,27 @@ export async function getEscalerasAdmin() {
     .order('session_date', { ascending: false });
   if (error) throw error;
   return (data || []).filter((e) => !e.is_liguilla);
+}
+
+/* Cuantos van y cuantos esperan en varias noches de un jalon: lo usa el
+   Inicio del Admin, que necesita el numero de todas las noches de la semana
+   sin hacer una consulta por cada una. */
+export async function getConteosRegistros(escaleraIds) {
+  if (!escaleraIds || !escaleraIds.length) return {};
+  const { data, error } = await supabase
+    .from('escalera_registrations')
+    .select('escalera_id, status')
+    .in('escalera_id', escaleraIds);
+  if (error) throw error;
+  const out = {};
+  escaleraIds.forEach((id) => { out[id] = { confirmados: 0, espera: 0 }; });
+  (data || []).forEach((r) => {
+    const c = out[r.escalera_id];
+    if (!c) return;
+    if (r.status === 'confirmed' || r.status === 'substitute') c.confirmados += 1;
+    else if (r.status === 'waitlist') c.espera += 1;
+  });
+  return out;
 }
 
 export async function getRegistrosEscalera(escaleraId) {
@@ -565,6 +586,24 @@ export async function getRondasConPartidos(escaleraId) {
     .order('court_number', { ascending: true });
   if (err2) throw err2;
   return rounds.map((r) => ({ ...r, partidos: (matches || []).filter((m) => m.round_id === r.id) }));
+}
+
+/* La noche arranca cuando recepcion confirma que la gente ya esta en cancha:
+   cierra la convocatoria y genera la ronda 1 de un solo golpe. Solo funciona
+   con el cupo completo — la app no arma escaleras incompletas. */
+export async function comenzarEscalera(escaleraId) {
+  const { data, error } = await supabase.rpc('comenzar_escalera', { p_escalera_id: escaleraId });
+  if (error) throw error;
+  return data;
+}
+
+/* Recepcion mete a alguien que llego sin haberse anotado. */
+export async function adminAgregarJugador(escaleraId, playerId, partnerId = null) {
+  const { data, error } = await supabase.rpc('admin_agregar_jugador', {
+    p_escalera_id: escaleraId, p_player_id: playerId, p_partner_id: partnerId,
+  });
+  if (error) throw error;
+  return Array.isArray(data) ? data[0] : data;
 }
 
 export async function generarRondaInicial(escaleraId) {
@@ -705,6 +744,22 @@ export async function sustituirCalificadoLiguilla(qualifierId, substitutePlayerI
    Maestro — configuración del sistema
    ============================================================ */
 
+let _ajustesCache = null;
+/** Un ajuste numerico del sistema, leido una sola vez por carga de pagina. */
+export async function getAjusteNum(key, porDefecto) {
+  try {
+    if (!_ajustesCache) {
+      const { data, error } = await supabase.from('system_settings').select('key, value');
+      if (error) throw error;
+      _ajustesCache = Object.fromEntries((data || []).map((r) => [r.key, r.value]));
+    }
+    const n = Number(_ajustesCache[key]);
+    return Number.isFinite(n) ? n : porDefecto;
+  } catch {
+    return porDefecto;
+  }
+}
+
 export async function getSystemSettingsAll() {
   const { data, error } = await supabase.from('system_settings').select('*').order('key', { ascending: true });
   if (error) throw error;
@@ -769,6 +824,6 @@ export async function getMisNotificaciones(playerId, limite = 30) {
   return data;
 }
 export async function marcarNotificacionLeida(notifId) {
-  const { error } = await supabase.from('notifications').update({ read_at: new Date().toISOString() }).eq('id', notifId);
+  const { error } = await supabase.from('notifications').update({ read_at: ahora().toISOString() }).eq('id', notifId);
   if (error) throw error;
 }

@@ -59,13 +59,19 @@ export const LECCIONES = [
         listo: () => rolActual() !== 'jugador' && esLunesDeNoche(),
       },
       {
-        texto: 'Entra a Admin → Resultados de escaleras y abre la noche del lunes.',
-        ir: '/admin/escaleras',
-        listo: () => ruta().startsWith('/admin/escaleras') && document.body.innerText.includes('Rondas'),
+        texto: 'En el Inicio, en el bloque de "Hoy", pícale al botón de la noche.',
+        porque: 'El Inicio de recepción ya te lleva directo a la noche que toca: no tienes que buscarla.',
+        ir: '/',
+        listo: () => ruta().startsWith('/admin/escaleras') && /qui[eé]n va/i.test(document.body.innerText),
       },
       {
-        texto: 'Pícale a "Generar ronda 1".',
-        porque: 'La app reparte a los 12 en las 3 canchas y le asigna compañero al azar a cada quien.',
+        texto: 'Revisa arriba cuántos van: tiene que decir 12 de 12.',
+        porque: 'La escalera solo arranca con el cupo lleno. Si faltan, puedes agregar con "+ Agregar" a quien haya llegado, o cancelar la noche.',
+        listo: () => /12\s*\/\s*12/.test(document.body.innerText) || rondasDeLaVista() >= 1,
+      },
+      {
+        texto: 'Pícale a "Comenzar escalera" y confirma.',
+        porque: 'Ese botón es el que cierra la convocatoria: hasta ese momento la gente se puede seguir anotando en la puerta. Al confirmar, la app reparte a los 12 en las 3 canchas.',
         listo: () => rondasDeLaVista() >= 1,
       },
       {
@@ -80,11 +86,11 @@ export const LECCIONES = [
       },
       {
         texto: 'Sigue capturando y generando hasta llegar a la ronda 7.',
-        porque: 'Verás que nunca te repite compañero dos rondas seguidas.',
+        porque: 'Nunca te repite compañero dos rondas seguidas. Y en la 7 se acaba: la app ya no deja generar más.',
         listo: () => rondasDeLaVista() >= 7,
       },
       {
-        texto: 'Cierra la escalera.',
+        texto: 'Cierra la noche.',
         porque: 'Ahí se reparten los bonos de posición final (10 / 5 / 0 según la cancha donde acabaron) y la noche entra al ranking. Esto no se puede deshacer.',
         listo: () => document.body.innerText.includes('ya está cerrada'),
       },
@@ -130,27 +136,61 @@ export const LECCIONES = [
   {
     titulo: 'Lección 4 · Cuando no se llena el cupo',
     quien: 'admin',
-    intro: 'Pasa seguido y es la decisión que más duda genera.',
+    intro: 'Regla del club: o se completan los 12, o no hay escalera. Esto es lo que tienes que hacer.',
     pasos: [
       {
         texto: 'Pon el reloj en "Miércoles 2:00 pm" (6 h antes del evento).',
-        porque: 'La app solo sugiere cuando ya falta poco: antes de eso da tiempo a que la lista de espera llene los huecos.',
+        porque: 'La app solo te avisa cuando ya falta poco: antes de eso le da chance a la lista de espera.',
         listo: () => esMiercolesTarde(),
       },
       {
-        texto: 'Entra como Recepción a Admin → Resultados de escaleras y abre el miércoles.',
-        ir: '/admin/escaleras',
+        texto: 'Entra como Recepción y abre la noche del miércoles.',
+        ir: '/',
         listo: () => rolActual() !== 'jugador' && ruta().startsWith('/admin/escaleras'),
       },
       {
-        texto: 'Lee el panel de cupo: dice cuántos hay y qué conviene hacer.',
-        porque: 'Es una sugerencia, no una orden: la decisión es tuya. Si cancelas, a nadie se le penaliza y se avisa solo.',
-        listo: () => document.body.innerText.includes('cancha') && document.body.innerText.includes('confirmados'),
+        texto: 'Fíjate que "Comenzar escalera" está apagado y dice cuántos faltan.',
+        porque: 'Se juega de 4 en 4: con 10 no se pueden armar las canchas. No es que la app sea necia, es que no hay forma.',
+        listo: () => /faltan/i.test(document.body.innerText),
+      },
+      {
+        texto: 'Prueba "+ Agregar" y mete a alguien que haya llegado.',
+        porque: 'Si alguien llega sin haberse anotado, tú lo metes desde aquí. Antes no se podía y era un problema real.',
+        listo: () => /agregar a la noche/i.test(document.body.innerText) || /qui[eé]n va/i.test(document.body.innerText),
+      },
+      {
+        texto: 'Si de plano no se completa, dale "Cancelar la noche".',
+        porque: 'Nadie recibe penalización ni pierde puntos, y la app les avisa sola. Lo que se organice después ya es cosa de ustedes con los jugadores: no da puntos ni entra al ranking.',
+        listo: () => /cancelar la noche/i.test(document.body.innerText),
       },
     ],
   },
   {
-    titulo: 'Lección 5 · Lo que solo ve Dirección',
+    titulo: 'Lección 5 · El domingo: quién sube y quién baja',
+    quien: 'mixto',
+    intro: 'Cada domingo a las 9 de la mañana el sistema mueve las categorías. Aquí lo ves pasar.',
+    pasos: [
+      {
+        texto: 'Abre Ranking y fíjate quiénes están en zona de descenso y en zona de ascenso.',
+        porque: 'Los últimos de A bajan y los primeros de B suben. Solo esos: nadie más se mueve.',
+        ir: '/ranking',
+        listo: () => ruta() === '/ranking',
+      },
+      {
+        texto: 'Ahora pon el reloj en "Domingo que viene 9:05 am".',
+        porque: 'Es el momento exacto en que el sistema recalcula. En la app real lo hace solo, sin que nadie lo dispare.',
+        listo: () => esDomingoDeCorte(),
+      },
+      {
+        texto: 'Vuelve a Ranking y compara: cambiaron dos de cada lado.',
+        porque: 'Antes se volvía a partir el club a la mitad cada domingo y cambiaba casi un tercio de la gente. Ahora es un tope duro de 2 y 2.',
+        ir: '/ranking',
+        listo: () => ruta() === '/ranking',
+      },
+    ],
+  },
+  {
+    titulo: 'Lección 6 · Lo que solo ve Dirección',
     quien: 'maestro',
     intro: 'La cuenta Maestro. Es la tuya, y nadie más la debe tener.',
     pasos: [
@@ -192,6 +232,15 @@ function esLunesDeNoche() {
   const f = fechaClub(DEMO.ahora());
   return f === db.__lunes_demo && DEMO.ahora().getUTCHours() >= 1;
 }
+// El domingo que cierra la semana sembrada: es cuando corre el recalculo.
+function esDomingoDeCorte() {
+  const db = baseDeDatos();
+  if (!db.__lunes_demo) return false;
+  const d = new Date(db.__lunes_demo + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + 6);
+  return fechaClub(DEMO.ahora()) >= d.toISOString().slice(0, 10);
+}
+
 function esMiercolesTarde() {
   const db = baseDeDatos();
   const f = fechaClub(DEMO.ahora());
@@ -291,7 +340,7 @@ function pintarTutorial() {
     const lec = DEMO.leccion == null ? null : LECCIONES[DEMO.leccion];
     panel.appendChild(el('button', { class: 'demo-tuto-abrir', onclick: () => {
       DEMO.tutorialCerrado = false; DEMO.persistir(); pintarTutorial();
-    } }, lec ? `Tutorial · paso ${Math.min(DEMO.paso + 1, lec.pasos.length)}/${lec.pasos.length}` : 'Tutorial · 5 lecciones'));
+    } }, lec ? `Tutorial · paso ${Math.min(DEMO.paso + 1, lec.pasos.length)}/${lec.pasos.length}` : 'Tutorial · 6 lecciones'));
     return;
   }
 
@@ -305,7 +354,7 @@ function pintarTutorial() {
 
   if (DEMO.leccion == null) {
     panel.appendChild(el('p', { class: 'demo-tuto-intro' },
-      'Cinco lecciones cortas. Se hacen sobre la app: cada paso se marca solo cuando lo haces.'));
+      'Seis lecciones cortas. Se hacen sobre la app: cada paso se marca solo cuando lo haces.'));
     const lista = el('div', { class: 'demo-tuto-lista' });
     LECCIONES.forEach((l, i) => {
       lista.appendChild(el('button', { class: 'demo-tuto-item', onclick: () => empezar(i) }, [

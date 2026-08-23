@@ -49,7 +49,9 @@ Dentro de las 2 horas se juegan varias rondas de 15 minutos cada una (hasta 7 ro
 
 Subir y bajar de cancha según ganes o pierdas es el corazón del formato y siempre ha sido así: nadie se queda fijo en una cancha toda la noche.
 
-Un Admin del club es quien arranca cada ronda y captura los resultados según se van jugando los partidos.` },
+Un Admin del club es quien arranca la noche y captura los resultados según se van jugando los partidos. La noche empieza cuando recepción le da **"Comenzar escalera"**, ya con todos en cancha: hasta ese momento la lista sigue abierta.
+
+Se juegan hasta 7 rondas. Al llegar a la 7 la app ya no deja generar más.` },
 
 { section_key: 'puntos', sort_order: 2, title: 'Cómo funcionan tus puntos', body_markdown:
 `Tus puntos se ganan jugando — así se calculan:
@@ -78,25 +80,41 @@ No es un acumulado de toda tu vida en el club — es la suma de tus **últimas 6
 { section_key: 'categorias', sort_order: 3, title: 'Tu categoría', body_markdown:
 `El club tiene dos categorías: **A** (la más alta) y **B**. Tu categoría es una sola — combina tu desempeño en Individual y en Parejas, nunca se llevan por separado.
 
-## Cómo se calcula
-Cada domingo a las 9:00am (hora CDMX) el sistema toma el puntaje móvil (últimas 6 escaleras) de todos los jugadores activos, los ordena de mayor a menor, y divide el grupo a la mitad: la mitad de arriba queda en **A**, la mitad de abajo en **B**. Esa es tu categoría para las convocatorias de esa semana.
+## Se sube y se baja, como en el futbol
+Cada categoría conserva a su gente. Cada **domingo a las 9:00am** (hora CDMX) pasa una sola cosa:
+
+- **Bajan a B los 2 últimos de la tabla de A.**
+- **Suben a A los 2 primeros de la tabla de B.**
+- **Nadie más se mueve.**
+
+Nada de recalcular todo cada semana: si vas a media tabla, tu categoría no cambia aunque tengas una mala noche. Solo se mueven las orillas.
+
+## Quién entra al intercambio
+Solo quien haya jugado al menos una noche en su ventana móvil (las últimas 6 escaleras). Si no jugaste, ni subes ni bajas: te quedas donde estabas.
+
+## Zona de descenso y zona de ascenso
+En la pestaña Ranking se marcan los **3 últimos de A** ("zona de descenso") y los **3 primeros de B** ("zona de ascenso"). Es solo un aviso para que sepas dónde estás parado; los que de verdad se mueven son 2 de cada lado.
 
 ## Si eres nuevo
-Mientras no tengas suficiente historial de partidos jugados, la app te muestra todas las convocatorias abiertas sin restringirte por categoría — juega, acumula tus primeras escaleras, y en cuanto tengas resultados suficientes el sistema te asigna tu categoría automáticamente.
+Tu primera categoría sale del nivel que declaraste al registrarte. A partir de ahí subes o bajas jugando, como todos.
 
-## Si llevas tiempo sin jugar
-Si pasas 4 semanas o más sin registrar actividad, al volver entras temporalmente en una categoría "límite" mientras el sistema vuelve a tener suficiente información reciente tuya para ubicarte con precisión.` },
+## Si te avisan
+Cuando subes o bajas, la app te manda una notificación el domingo. No te enteras llegando a la cancha.` },
 
-{ section_key: 'zona_limite', sort_order: 4, title: 'Zona Límite', body_markdown:
-`Justo en la frontera entre categoría A y B hay una banda de los 3 jugadores más bajos de A y los 3 más altos de B — a esto le llamamos **Zona Límite**.
+{ section_key: 'zona_limite', sort_order: 4, title: 'Zona de descenso y de ascenso', body_markdown:
+`En la tabla de tu categoría se marcan las orillas, para que sepas qué está en juego cada semana.
 
-## Qué significa estar en Zona Límite
-Si tu puntaje móvil te ubica en esa banda, tienes flexibilidad: puedes **quedarte** en tu categoría actual, o **probar el otro lado** (subir a A o bajar a B) para esa semana.
+## Si estás en Categoría A
+Los **3 últimos** de la tabla aparecen marcados en **zona de descenso**. De esos, los **2 últimos** bajan a B el domingo. Estar marcado no significa que ya bajaste: significa que una buena noche te saca de ahí.
 
-## Cómo se mantiene el balance
-Cuando alguien de la banda decide cambiarse de lado, el sistema hace un intercambio 1x1 automático con alguien del otro extremo de la Zona Límite, para que ninguna categoría se quede con más o menos cupo del que le corresponde.
+## Si estás en Categoría B
+Los **3 primeros** aparecen en **zona de ascenso**, y los **2 primeros** suben a A el domingo. Es la forma directa de subir: ganar en B.
 
-Es la forma en que el club te deja "probar tu siguiente nivel" sin que sea un salto brusco ni definitivo — tu resultado de esa semana sigue contando normal para tu puntaje móvil.` },
+## Por qué solo se mueven 2
+Porque el puntaje móvil son tus últimas 6 escaleras y los de media tabla están muy cerca unos de otros: si se recalculara todo cada semana, media liga andaría cambiando de categoría todo el tiempo y nadie llegaría a conocer a su grupo. Con 2 y 2, la categoría se siente estable y aun así siempre hay algo que pelear.
+
+## Si las categorías se desbalancean
+Si por altas o bajas una categoría queda con dos o más jugadores de diferencia que la otra, ese domingo se mueve **uno extra** hacia la más chica, para que las dos tengan gente suficiente para llenar sus noches.` },
 
 { section_key: 'convocatorias', sort_order: 5, title: 'Convocatorias y listas de espera', body_markdown:
 `## Cuándo abren
@@ -118,8 +136,13 @@ A esa hora:
 ## Lista de espera
 Es estrictamente **por orden de solicitud**: el primero que la pidió es el primero que entra. No influyen los puntos ni la categoría. Cuando alguien se da de baja, el sistema mete al siguiente de la fila automáticamente y le manda aviso.
 
-## Si no se llena el cupo
-El club **no cancela de inmediato**. Se le da tiempo a la lista de espera para llenar los huecos. Cuando faltan **6 horas** para la sesión, la app le muestra al administrador cuántos confirmados hay y le sugiere qué hacer (jugar con menos canchas o cancelar la noche). La decisión final siempre es del administrador. Si se cancela la noche, **nadie recibe penalización ni pierde puntos**.` },
+## Hasta cuándo te puedes anotar
+La lista sigue abierta **hasta que recepción arranca la noche**, no hasta la hora de inicio. Si llegas al club y todavía hay lugar, te puedes anotar ahí mismo desde tu teléfono o pedirle a recepción que te meta. En cuanto le dan "Comenzar escalera" la lista se cierra: ya nadie entra.
+
+## Si no se llena el cupo, no hay escalera
+Se juega **2 contra 2**, o sea de 4 en 4: con 10 personas no se pueden armar las canchas. Por eso la escalera **solo arranca con los 12 lugares llenos**.
+
+Cuando faltan 6 horas la app le avisa a recepción cuántos faltan, y ellos pueden meter a quien llegue. Si de plano no se completa, **se cancela la noche**: nadie recibe penalización ni pierde puntos, y la app les avisa a todos. Lo que se organice después entre los que llegaron es cosa de ustedes con recepción — no lo arma la app, no da puntos y no cuenta para el ranking.` },
 
 { section_key: 'sustitutos', sort_order: 6, title: 'Sustitutos y penalizaciones', body_markdown:
 `## Buscar sustituto (solo Individual)

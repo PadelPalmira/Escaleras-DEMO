@@ -47,6 +47,11 @@ async function main() {
     }
   }
 
+  if (golden.guardas) {
+    console.log('\n--- guardas de cupo y de tope de rondas ---');
+    probarGuardas(motor, golden.guardas, linea);
+  }
+
   console.log(fallos === 0
     ? '\nRESULTADO: la demo se comporta EXACTAMENTE igual que la base real.'
     : `\nRESULTADO: ${fallos} diferencia(s) — la demo NO refleja la app real.`);
@@ -374,4 +379,71 @@ function revisarReglas(rondas) {
     [`si se repite un compañero, pasaron al menos 2 rondas (minimo visto: ${separacionMinima === Infinity ? 'ninguna repeticion' : separacionMinima})`]:
       separacionMinima === Infinity || separacionMinima >= 2 || `hubo una repeticion a ${separacionMinima} ronda(s)`,
   };
+}
+
+/* ============================================================
+   Guardas nuevas (Fase 10)
+   ------------------------------------------------------------
+   La ronda 1 nunca puede quedar coja y no se pueden generar mas
+   rondas del tope. Lo que se compara aqui es ACEPTA / RECHAZA,
+   contra lo que hizo el Postgres real (golden.guardas).
+   ============================================================ */
+function probarGuardas(motor, guardas, linea) {
+  for (const caso of guardas.ronda_inicial) {
+    const db = dbCupo(motor, caso.confirmados, caso.capacidad);
+    let acepto = true; let msg = '';
+    try {
+      motor.generarRondaInicial(db, 'e1', { ahora: () => new Date('2031-03-03T02:00:00Z'), uid: 'a', rnd: motor.rngDesde(3) });
+    } catch (e) { acepto = false; msg = e.message; }
+    linea(acepto === caso.acepta,
+      `ronda 1 con ${caso.confirmados}/${caso.capacidad}: ${caso.acepta ? 'debe armarse' : 'debe negarse'}`
+      + (caso.porque ? ` (${caso.porque})` : ''));
+    if (acepto) {
+      const huecos = db.round_matches.filter((m) =>
+        !m.team1_player1 || !m.team1_player2 || !m.team2_player1 || !m.team2_player2).length;
+      linea(huecos === 0, `   y ninguna cancha queda con huecos (${huecos})`);
+    } else if (acepto !== caso.acepta) {
+      console.log('        ' + msg);
+    }
+  }
+
+  // Tope de rondas
+  const t = guardas.tope_de_rondas;
+  const db = dbCupo(motor, 12, 12);
+  const ctx = { ahora: () => new Date('2031-03-03T02:00:00Z'), uid: 'a', rnd: motor.rngDesde(5) };
+  motor.generarRondaInicial(db, 'e1', ctx);
+  let llego = 1; let topo = false;
+  for (let i = 0; i < 12; i++) {
+    const rd = db.rounds.filter((r) => r.escalera_id === 'e1').sort((a, b) => b.round_number - a.round_number)[0];
+    db.round_matches.filter((m) => m.round_id === rd.id).forEach((m) =>
+      motor.registrarResultadoPartido(db, m.id, [{ team1: 6, team2: 3 }, { team1: 6, team2: 4 }], ctx));
+    try { motor.generarSiguienteRonda(db, 'e1', ctx); llego += 1; }
+    catch (e) { topo = /rondas/.test(e.message); break; }
+  }
+  linea(llego === t.acepta_hasta, `se juegan ${t.acepta_hasta} rondas (llego a ${llego})`);
+  linea(topo, `la ronda ${t.rechaza_desde} se rechaza`);
+}
+
+function dbCupo(motor, n, capacidad) {
+  const db = {
+    __seq: 0, profiles: [], category_snapshots: [],
+    weekday_schedule: [{ id: 'ws1', capacity: capacidad, courts: 3 }],
+    escaleras: [{ id: 'e1', weekday_schedule_id: 'ws1', session_date: '2031-03-03',
+      format: 'individual', category: 'A', status: 'scheduled', courts_active: 3 }],
+    escalera_registrations: [], rounds: [], round_matches: [], points_ledger: [],
+    ranking_privilege_penalties: [],
+    system_settings: [
+      { key: 'puntos_por_game', value: '2' }, { key: 'bono_victoria_partido', value: '3' },
+      { key: 'multiplicador_cancha_1', value: '1.2' }, { key: 'multiplicador_cancha_2', value: '1.0' },
+      { key: 'multiplicador_cancha_3', value: '0.9' }, { key: 'max_rondas_escalera', value: '7' },
+      { key: 'bono_posicion_final_por_cancha', value: { 1: 10, 2: 5, 3: 0 } },
+    ],
+  };
+  for (let i = 1; i <= n; i++) {
+    const id = 'p' + String(i).padStart(2, '0');
+    db.profiles.push({ id, full_name: 'J' + i, status: 'active', role: 'jugador' });
+    db.escalera_registrations.push({ id: 'r' + i, escalera_id: 'e1', player_id: id, partner_id: null,
+      status: 'confirmed', created_at: `2031-03-01T00:00:${String(i).padStart(2, '0')}Z` });
+  }
+  return db;
 }

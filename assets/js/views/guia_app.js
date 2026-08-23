@@ -1,4 +1,4 @@
-import { el } from '../utils.js';
+import { el, ahora } from '../utils.js';
 import { icon } from '../icons.js';
 import { updateMyProfile, getMiCategoria } from '../api.js';
 import { textoDia } from '../niveles.js';
@@ -45,7 +45,7 @@ export function renderGuiaApp({ profile, recomendacion = null, esNuevo, onDone }
   });
 
   function finish() {
-    updateMyProfile({ app_guide_seen_at: new Date().toISOString() }).catch(() => {});
+    updateMyProfile({ app_guide_seen_at: ahora().toISOString() }).catch(() => {});
     onDone();
   }
 

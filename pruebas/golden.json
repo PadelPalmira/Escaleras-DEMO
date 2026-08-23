@@ -38,5 +38,64 @@
       "rondas": "R1C1:4+15vs5+8=8-12 | R1C2:7+14vs11+12=10-10 | R1C3:6+9vs10+13=12-7 | R2C1:5+12vs8+11=10-10 | R2C2:4+9vs6+15=12-7 | R2C3:7+13vs10+14=8-12",
       "totales": "1=17.82 2=0.00 4=51.20 5=66.40 6=43.30 7=34.40 8=70.00 9=56.30 10=36.90 11=60.60 12=57.00 13=9.18 14=0.00 15=38.20"
     }
+  },
+  "guardas": {
+    "_comentario": "Comportamientos verificados contra el Postgres REAL de produccion el 23-ago-2026. La demo debe aceptar y rechazar exactamente lo mismo.",
+    "ronda_inicial": [
+      {
+        "confirmados": 12,
+        "capacidad": 12,
+        "acepta": true
+      },
+      {
+        "confirmados": 11,
+        "capacidad": 12,
+        "acepta": false,
+        "porque": "no es multiplo de 4"
+      },
+      {
+        "confirmados": 10,
+        "capacidad": 12,
+        "acepta": false,
+        "porque": "no es multiplo de 4"
+      },
+      {
+        "confirmados": 9,
+        "capacidad": 12,
+        "acepta": false,
+        "porque": "no es multiplo de 4"
+      },
+      {
+        "confirmados": 8,
+        "capacidad": 12,
+        "acepta": false,
+        "porque": "es multiplo de 4 pero no completa el cupo"
+      },
+      {
+        "confirmados": 0,
+        "capacidad": 12,
+        "acepta": false,
+        "porque": "nadie"
+      }
+    ],
+    "tope_de_rondas": {
+      "max_rondas_escalera": 7,
+      "acepta_hasta": 7,
+      "rechaza_desde": 8
+    },
+    "ascenso_descenso": {
+      "ascenso_descenso_por_semana": 2,
+      "primera_semana": "mediana (mitad A, mitad B)",
+      "cada_semana": {
+        "suben": 2,
+        "bajan": 2,
+        "tamanos_estables": true
+      },
+      "quien_baja": "los ultimos de A por puntaje movil, entre los que jugaron al menos una noche",
+      "zona": {
+        "bottom_a": 3,
+        "top_b": 3
+      }
+    }
   }
 }

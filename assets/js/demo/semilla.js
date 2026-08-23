@@ -79,13 +79,14 @@ const AJUSTES = [
   ['late_cancel_cutoff_hours', '12', 'Horas antes de la sesion: cancelar despues de este corte sin sustituto = penalizacion tardia'],
   ['late_cancel_penalty_pct', '15', 'Porcentaje de puntos del mes en curso que se pierde por cancelacion tardia sin sustituto'],
   ['no_show_penalty_pct', '50', 'Porcentaje de puntos del mes en curso que se pierde por no presentarse sin avisar'],
-  ['cupo_check_hours_before', '6', 'Horas antes del evento en que la app le recomienda al admin reducir canchas o cancelar cuando el cupo quedo incompleto.'],
+  ['cupo_check_hours_before', '6', 'Horas antes del evento en que la app le avisa al admin que el cupo no se ha completado. Si no se llena, la noche se cancela: la escalera solo arranca con el cupo lleno.'],
   ['substitute_split_ausente_pct', '66', 'Porcentaje de puntos ganados que recibe el jugador ausente cuando consigue sustituto'],
   ['substitute_split_sustituto_pct', '34', 'Porcentaje de puntos ganados que recibe el sustituto'],
   ['monetary_fine_amount_mxn', '250', 'Monto sugerido de multa manual por cancelacion tardia/no-show'],
   ['retas_price_mxn', '150', 'Costo informativo por persona de las Retas Abiertas del viernes.'],
   ['inactive_weeks_threshold', '4', 'Semanas sin jugar tras las cuales un jugador entra a Categoria Limite por inactividad'],
-  ['zona_limite_band_size', '3', 'Cuantos jugadores a cada lado del corte A/B entran en Zona Limite'],
+  ['zona_limite_band_size', '3', 'Cuantos jugadores de cada orilla se marcan en zona de descenso (en A) o de ascenso (en B). Es solo el aviso: no cambia cuantos se mueven.'],
+  ['ascenso_descenso_por_semana', '2', 'Cuantos jugadores bajan de A y cuantos suben de B cada domingo. Es un tope duro: nadie mas cambia de categoria esa semana. Si las dos categorias quedan con 2 o mas de diferencia en tamano, se mueve uno extra hacia la mas chica para emparejarlas.'],
   ['timezone', 'America/Mexico_City', 'Zona horaria oficial del club para TODOS los cortes de tiempo.'],
 ];
 
@@ -116,7 +117,9 @@ export function construirDemo(hoyRealISO) {
      inventado — es el que produce la fórmula real. */
   for (let s = SEMANAS_DE_HISTORIAL; s >= 1; s--) {
     const lunes = sumarDias(lunesActual, -7 * s);
-    recalcularCategorias(db, lunes);
+    // El corte se guarda con la fecha del domingo, igual que en produccion
+    // (la tarea automatica corre el domingo 9am y pasa esa fecha).
+    motor.recalcularCategorias(db, sumarDias(lunes, -1), () => instanteClub(sumarDias(lunes, -1), '09:00'));
     for (const ws of HORARIO) {
       if (ws.format === 'retas_abiertas') continue;
       const fecha = sumarDias(lunes, DIAS_HABILES.indexOf(ws.weekday));
@@ -124,7 +127,7 @@ export function construirDemo(hoyRealISO) {
     }
   }
 
-  recalcularCategorias(db, lunesActual);
+  motor.recalcularCategorias(db, sumarDias(lunesActual, -1), () => instanteClub(sumarDias(lunesActual, -1), '09:00'));
   sembrarSemanaActual(db, lunesActual, rnd);
   sembrarLiguilla(db, lunesActual);
   sembrarCrm(db, lunesActual);
@@ -141,56 +144,6 @@ export function semanaDeLaDemo(hoyISO) {
   const dia = diaSemanaDe(hoyISO);
   const lunes = lunesDe(hoyISO);
   return ['viernes', 'sabado', 'domingo'].includes(dia) ? sumarDias(lunes, 7) : lunes;
-}
-
-/* ============================================================
-   recalcular_categorias_globales(week_start)
-   ------------------------------------------------------------
-   Traducción de la función real: se ordena a TODOS los jugadores
-   por su puntaje móvil (sin importar en qué categoría jugaron) y
-   se parte el grupo a la mitad. Quien todavía no tiene partidos
-   entra por su nivel declarado.
-   ============================================================ */
-function recalcularCategorias(db, lunes) {
-  const banda = motor.cfgNum(db, 'zona_limite_band_size', 3);
-  const pv = motor.puntosVivos(db);
-
-  const orden = pv.slice().sort((a, b) =>
-    b.rolling_points - a.rolling_points || motor.ordenId(a.player_id, b.player_id));
-  const total = orden.length;
-  const corte = Math.ceil(total / 2);
-
-  orden.forEach((r, i) => {
-    const rnk = i + 1;
-    const enA = rnk <= corte;
-    ponerSnapshot(db, {
-      player_id: r.player_id, week_start_date: lunes,
-      rolling_points: r.rolling_points, escaleras_counted: r.escaleras_contadas,
-      rank: rnk, total_active_players: total,
-      category: enA ? 'A' : 'B',
-      zona_limite_side: enA && rnk > corte - banda ? 'bottom_a'
-        : (!enA && rnk <= corte + banda ? 'top_b' : null),
-      source: 'rolling_window',
-      computed_at: instanteClub(sumarDias(lunes, -1), '09:00').toISOString(),
-    });
-  });
-
-  db.profiles
-    .filter((p) => p.status === 'active' && p.declared_level && !pv.some((x) => x.player_id === p.id))
-    .forEach((p) => ponerSnapshot(db, {
-      player_id: p.id, week_start_date: lunes, rolling_points: 0, escaleras_counted: 0,
-      rank: null, total_active_players: null,
-      category: ['2da_varonil', '3ra_varonil', '4ta_varonil', '5ta_varonil'].includes(p.declared_level) ? 'A' : 'B',
-      zona_limite_side: null, source: 'bootstrap_declared',
-      computed_at: instanteClub(sumarDias(lunes, -1), '09:00').toISOString(),
-    }));
-}
-
-function ponerSnapshot(db, fila) {
-  const i = db.category_snapshots.findIndex(
-    (c) => c.player_id === fila.player_id && c.week_start_date === fila.week_start_date);
-  if (i >= 0) db.category_snapshots[i] = { ...db.category_snapshots[i], ...fila };
-  else db.category_snapshots.push({ id: motor.nuevoId(db, 'cs'), ...fila });
 }
 
 /* ---------- una noche completa, jugada de verdad ---------- */
@@ -262,7 +215,7 @@ function marcadorVerosimil(m, fuerza, rnd) {
    real (nadie juega todas las noches de todas las semanas). */
 function elegirAsistentes(db, lunes, categoria, rnd) {
   const dela = db.category_snapshots
-    .filter((c) => c.week_start_date === lunes)
+    .filter((c) => c.week_start_date === sumarDias(lunes, -1))
     .filter((c) => catEfectiva(c) === categoria)
     .map((c) => c.player_id)
     .filter((id) => (db.profiles.find((p) => p.id === id) || {}).role === 'jugador');
