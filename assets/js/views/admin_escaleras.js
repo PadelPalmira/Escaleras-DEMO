@@ -1,4 +1,5 @@
 import { el, todayISO, formatFecha, formatHora, toast, humanizeError, openSheet, confirmSheet } from '../utils.js';
+import { icon } from '../icons.js';
 import {
   getMyProfile, esAdminOMaestro,
   getEscalerasAdmin, getRegistrosEscalera, getRondasConPartidos,
@@ -6,12 +7,118 @@ import {
   marcarNoShow, cancelarRegistro, asignarSustituto, asignarSustitutoAdmin, buscarJugadores,
   cancelarEscaleraAdmin,
   comenzarEscalera, adminAgregarJugador, getAjusteNum,
+  iniciarCronometroRonda, horaServidor,
 } from '../api.js';
 
 /* El Inicio del Admin manda directo a UNA noche. Se guarda aquí cuál para
    que al entrar a la pantalla se abra esa, en vez de dejar a recepción
    buscándola otra vez en la lista. */
 let nochePendiente = null;
+
+/* ============================================================
+   Cronómetro de la ronda
+   ------------------------------------------------------------
+   Recepción no debería tener que estar viendo el reloj mientras
+   captura marcadores y le contesta a 12 jugadores. La cuenta
+   regresiva se calcula SIEMPRE desde la marca de tiempo que dejó
+   el servidor al arrancarla — no se lleva contando en el
+   teléfono — así que sobrevive a que se recargue la página o se
+   apague la pantalla, y se ve igual desde cualquier dispositivo.
+
+   El iPhone no puede vibrar desde una página web (Safari nunca ha
+   soportado esa API), así que el aviso es sonido + pantalla. Y el
+   sonido solo puede sonar si el navegador lo "desbloqueó" antes
+   con un toque: por eso se arma en el mismo botón que arranca el
+   cronómetro.
+   ============================================================ */
+let cronoTick = null;          // setInterval de la cuenta regresiva
+let cronoAudio = null;         // AudioContext ya desbloqueado
+let cronoAlarma = null;        // setInterval de los beeps
+let cronoWakeLock = null;      // para que el teléfono no se duerma
+let cronoSonadaEn = null;      // round_id cuya alarma ya sonó
+let desfaseReloj = 0;          // reloj del teléfono - reloj del servidor (ms)
+let relojSincronizado = false; // ya se comparó contra el servidor en esta sesión
+let mostrarAcomodo = false;    // abrir la hoja de "a dónde va cada quien"
+
+function ahoraServidor() { return Date.now() - desfaseReloj; }
+
+/* La cuenta regresiva se mide contra el reloj del SERVIDOR, no contra el del
+   teléfono: si el teléfono del club trae la hora mal puesta, el cronómetro
+   estaría mal sin que nadie lo note. Se compara una vez por sesión. */
+async function sincronizarReloj() {
+  if (relojSincronizado) return;
+  relojSincronizado = true;
+  try {
+    const s = await horaServidor();
+    desfaseReloj = Date.now() - s.getTime();
+  } catch { desfaseReloj = 0; }
+}
+
+function armarAudio() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!cronoAudio) cronoAudio = new AC();
+    if (cronoAudio.state === 'suspended') cronoAudio.resume();
+    // Un sonido mudo dentro del gesto del usuario: es lo que deja el audio
+    // habilitado para poder sonar solo, 15 minutos después.
+    const o = cronoAudio.createOscillator();
+    const g = cronoAudio.createGain();
+    g.gain.value = 0;
+    o.connect(g); g.connect(cronoAudio.destination);
+    o.start(); o.stop(cronoAudio.currentTime + 0.01);
+  } catch { /* sin audio disponible: queda el aviso visual */ }
+}
+
+function pitido() {
+  if (!cronoAudio) return;
+  try {
+    const t = cronoAudio.currentTime;
+    [0, 0.28, 0.56].forEach((d) => {
+      const o = cronoAudio.createOscillator();
+      const g = cronoAudio.createGain();
+      o.type = 'square';
+      o.frequency.setValueAtTime(880, t + d);
+      g.gain.setValueAtTime(0.0001, t + d);
+      g.gain.exponentialRampToValueAtTime(0.35, t + d + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.22);
+      o.connect(g); g.connect(cronoAudio.destination);
+      o.start(t + d); o.stop(t + d + 0.24);
+    });
+  } catch { /* nada */ }
+}
+
+function arrancarAlarma() {
+  if (cronoAlarma) return;
+  pitido();
+  cronoAlarma = setInterval(pitido, 3000);
+}
+function callarAlarma() {
+  if (cronoAlarma) { clearInterval(cronoAlarma); cronoAlarma = null; }
+}
+
+async function mantenerPantallaEncendida() {
+  try {
+    if ('wakeLock' in navigator && !cronoWakeLock) {
+      cronoWakeLock = await navigator.wakeLock.request('screen');
+      cronoWakeLock.addEventListener('release', () => { cronoWakeLock = null; });
+    }
+  } catch { /* el navegador no lo permite: no pasa nada, solo se puede dormir */ }
+}
+function soltarPantalla() {
+  try { if (cronoWakeLock) cronoWakeLock.release(); } catch { /* nada */ }
+  cronoWakeLock = null;
+}
+
+function limpiarCronometro() {
+  if (cronoTick) { clearInterval(cronoTick); cronoTick = null; }
+  callarAlarma();
+}
+
+// Si el teléfono se durmió y vuelve, hay que recuperar el candado de pantalla.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && cronoTick) mantenerPantallaEncendida();
+});
 export function abrirNoche(escaleraId) { nochePendiente = escaleraId; }
 
 const FORMAT_LABEL = { individual: 'Individual', parejas: 'Parejas Fijas', retas_abiertas: 'Retas Abiertas' };
@@ -99,12 +206,17 @@ function tarjetaNoche(wrap, esc, destacar) {
 }
 
 async function pintarDetalle(wrap, escaleraId) {
+  limpiarCronometro();
   wrap.innerHTML = '';
   const loading = el('div', { class: 'stack', style: 'padding-top:60px;' }, [el('div', { class: 'spinner' })]);
   wrap.appendChild(loading);
 
-  const [escaleras, registros, rondas] = await Promise.all([
+  // El tope de rondas se pide junto con lo demas: si se pidiera despues, la
+  // pantalla pintaria el roster y las rondas llegarian tarde, que es justo el
+  // momento en que recepcion esta esperando ver la ronda nueva.
+  const [escaleras, registros, rondas, tope, minutosRonda] = await Promise.all([
     getEscalerasAdmin(), getRegistrosEscalera(escaleraId), getRondasConPartidos(escaleraId),
+    getAjusteNum('max_rondas_escalera', 7), getAjusteNum('minutos_por_ronda', 15),
   ]);
   const esc = escaleras.find((e) => e.id === escaleraId);
   wrap.innerHTML = '';
@@ -141,19 +253,18 @@ async function pintarDetalle(wrap, escaleraId) {
   const completo = confirmados.length >= cupo;
   const yaArranco = ['in_progress', 'completed'].includes(esc.status);
 
-  // ---- Cuántos van ----
-  if (esc.status !== 'cancelled') {
-    wrap.appendChild(renderCuantosVan(esc, confirmados.length, cupo, enEspera.length, yaArranco));
-  }
-
-  // ---- El botón grande de la noche ----
+  // Antes de arrancar, lo importante es el cupo y la lista. Ya en juego, lo
+  // importante es la ronda: el cupo se guarda en una linea y la lista se
+  // pliega, para que la ronda viva quede lo mas arriba posible.
   if (esc.status === 'scheduled') {
+    wrap.appendChild(renderCuantosVan(esc, confirmados.length, cupo, enEspera.length, yaArranco));
     wrap.appendChild(renderComenzar(esc, confirmados.length, cupo, faltan, completo, refresh));
-  }
-
-  // ---- Quién va ----
-  if (esc.status !== 'cancelled') {
     wrap.appendChild(renderRoster(esc, ws, registros, confirmados, enEspera, cupo, refresh));
+  } else if (esc.status !== 'cancelled') {
+    wrap.appendChild(el('p', { class: 'text-tiny mt-2', style: 'color:var(--text-tertiary);' },
+      `${confirmados.length} jugadores en cancha`));
+    wrap.appendChild(plegable(`Quién va (${confirmados.length})`,
+      renderRoster(esc, ws, registros, confirmados, enEspera, cupo, refresh)));
   }
 
   // ---- Rondas (solo cuando la noche ya arrancó) ----
@@ -164,30 +275,39 @@ async function pintarDetalle(wrap, escaleraId) {
     return;
   }
 
-  wrap.appendChild(el('div', { class: 'section-title' }, 'Rondas'));
   if (rondas.length === 0) {
-    wrap.appendChild(el('div', { class: 'card' },
+    wrap.appendChild(el('div', { class: 'card mt-4' },
       el('p', { class: 'text-muted' }, 'Esta noche está marcada como en juego pero no tiene rondas. Avisa a dirección.')));
     return;
   }
 
-  rondas.forEach((ronda) => {
-    const rondaCard = el('div', { class: 'card mt-4' });
-    rondaCard.appendChild(el('div', { class: 'row-between mb-2' }, [
-      el('div', { style: 'font-weight:700;' }, `Ronda ${ronda.round_number}`),
-      el('span', { class: `badge ${ronda.status === 'completed' ? 'badge-success' : 'badge-warning'}` },
-        ronda.status === 'completed' ? 'Completa' : 'En curso'),
-    ]));
-    ronda.partidos.forEach((m, i) => {
-      if (i > 0) rondaCard.appendChild(el('hr', { class: 'sep', style: 'margin:10px 0;' }));
-      rondaCard.appendChild(renderPartidoRow(m, refresh));
-    });
-    wrap.appendChild(rondaCard);
-  });
-
   const ultimaRonda = rondas[rondas.length - 1];
+  const anteriores = rondas.slice(0, -1);
   const pendientes = ultimaRonda.partidos.filter((m) => m.status === 'pending').length;
-  const tope = await getAjusteNum('max_rondas_escalera', 7);
+
+  /* La ronda que se está jugando va HASTA ARRIBA y sola. Antes se apilaban las
+     7 rondas una debajo de otra: en la ronda 6 había que bajar cuatro pantallas
+     para llegar a la viva, pasando junto a 15 botones de "Corregir resultado"
+     que borran rondas si se tocan por error. */
+  const tituloVivo = el('div', { class: 'row-between', style: 'align-items:baseline;' }, [
+    el('div', { style: 'font-weight:800;font-size:22px;' },
+      esc.status === 'completed' ? `Ronda ${ultimaRonda.round_number} — la última` : `Ronda ${ultimaRonda.round_number} de ${tope}`),
+    el('span', { class: `badge ${pendientes > 0 ? 'badge-warning' : 'badge-success'}` },
+      pendientes > 0 ? `Faltan ${pendientes}` : 'Completa'),
+  ]);
+  wrap.appendChild(el('div', { class: 'mt-4 mb-2' }, tituloVivo));
+
+  if (esc.status === 'in_progress') {
+    wrap.appendChild(renderCronometro(ultimaRonda, minutosRonda, refresh));
+  }
+
+  const cardViva = el('div', { class: 'card' });
+  ultimaRonda.partidos.forEach((m, i) => {
+    if (i > 0) cardViva.appendChild(el('hr', { class: 'sep', style: 'margin:10px 0;' }));
+    cardViva.appendChild(renderPartidoRow(m, refresh));
+  });
+  wrap.appendChild(cardViva);
+
   const accionesFinales = el('div', { class: 'stack gap-3 mt-4' });
 
   if (pendientes > 0) {
@@ -199,10 +319,23 @@ async function pintarDetalle(wrap, escaleraId) {
   } else {
     if (ultimaRonda.round_number < tope) {
       accionesFinales.appendChild(el('button', { class: 'btn btn-secondary', onclick: async (e) => {
-        e.target.disabled = true; e.target.textContent = 'Generando…';
-        try { await generarSiguienteRonda(escaleraId); toast(`Ronda ${ultimaRonda.round_number + 1} lista.`, 'success'); refresh(); }
-        catch (err) { toast(humanizeError(err), 'error'); e.target.disabled = false; e.target.textContent = 'Generar siguiente ronda'; }
-      } }, 'Generar siguiente ronda'));
+        e.target.disabled = true; e.target.textContent = 'Armando la siguiente…';
+        // Al terminar la ronda se abre sola la hoja con el acomodo nuevo: es
+        // el momento en que recepcion tiene que decirle a 12 personas a que
+        // cancha se mueven y con quien les toca.
+        mostrarAcomodo = true;
+        try { await generarSiguienteRonda(escaleraId); refresh(); }
+        catch (err) {
+          mostrarAcomodo = false;
+          // Si otro dispositivo ya la genero, no es un error que recepcion
+          // pueda entender: se recarga y ya está la ronda nueva en pantalla.
+          if (/duplicate key|rounds_escalera_id_round_number/i.test(String(err && err.message))) {
+            toast('Esa ronda ya estaba generada — te la muestro.', 'success'); refresh(); return;
+          }
+          toast(humanizeError(err), 'error');
+          e.target.disabled = false; e.target.textContent = `Terminar ronda ${ultimaRonda.round_number} y armar la ${ultimaRonda.round_number + 1}`;
+        }
+      } }, `Terminar ronda ${ultimaRonda.round_number} y armar la ${ultimaRonda.round_number + 1}`));
     } else {
       accionesFinales.appendChild(el('div', { class: 'aviso aviso-neutral' },
         `Ya se jugaron las ${tope} rondas de la noche. Cierra la escalera para repartir los bonos.`));
@@ -210,7 +343,7 @@ async function pintarDetalle(wrap, escaleraId) {
     accionesFinales.appendChild(el('button', { class: 'btn btn-primary', onclick: async (e) => {
       const ok = await confirmSheet({
         title: '¿Cerrar la noche?',
-        body: 'Se reparten los bonos de posición final según la cancha donde terminó cada quien, y la noche entra al ranking. No se puede deshacer desde aquí.',
+        body: `Se reparten los bonos de posición final según la cancha donde terminó cada quien, y la noche entra al ranking. Se cierra con las ${ultimaRonda.round_number} ronda(s) jugadas. No se puede deshacer desde aquí.`,
         confirmLabel: 'Sí, cerrar',
       });
       if (!ok) return;
@@ -220,6 +353,192 @@ async function pintarDetalle(wrap, escaleraId) {
     } }, 'Cerrar la noche'));
   }
   wrap.appendChild(accionesFinales);
+
+  /* Las rondas ya jugadas quedan guardadas pero fuera del camino. */
+  if (anteriores.length) {
+    const cuerpo = el('div');
+    anteriores.slice().reverse().forEach((ronda) => {
+      const rondaCard = el('div', { class: 'card mt-2' });
+      rondaCard.appendChild(el('div', { class: 'row-between mb-2' }, [
+        el('div', { style: 'font-weight:700;' }, `Ronda ${ronda.round_number}`),
+        el('span', { class: 'badge badge-success' }, 'Completa'),
+      ]));
+      ronda.partidos.forEach((m, i) => {
+        if (i > 0) rondaCard.appendChild(el('hr', { class: 'sep', style: 'margin:10px 0;' }));
+        rondaCard.appendChild(renderPartidoRow(m, refresh));
+      });
+      cuerpo.appendChild(rondaCard);
+    });
+    wrap.appendChild(plegable(`Rondas anteriores (${anteriores.length})`, cuerpo));
+  }
+
+  if (mostrarAcomodo && esc.status === 'in_progress') {
+    mostrarAcomodo = false;
+    abrirAcomodo(ultimaRonda, minutosRonda, refresh);
+  }
+}
+
+/* ============================================================
+   El reloj de la ronda, en pantalla
+   ============================================================ */
+function renderCronometro(ronda, minutos, refresh) {
+  const box = el('div', { class: 'card mb-2', style: 'text-align:center;' });
+
+  if (!ronda.cronometro_inicio) {
+    box.appendChild(el('p', { class: 'text-tiny mb-2' },
+      'Cuando ya estén los 12 en su cancha, arranca el reloj.'));
+    const b = el('button', { class: 'btn btn-primary' }, `Empezar los ${minutos} minutos`);
+    b.addEventListener('click', async () => {
+      armarAudio();   // tiene que pasar DENTRO del toque, si no el iPhone no deja sonar después
+      b.disabled = true; b.textContent = 'Arrancando…';
+      try {
+        const r = await iniciarCronometroRonda(ronda.id);
+        desfaseReloj = Date.now() - new Date(r.inicio).getTime();
+        relojSincronizado = true;
+        cronoSonadaEn = null;
+        mantenerPantallaEncendida();
+        refresh();
+      } catch (err) {
+        toast(humanizeError(err), 'error');
+        b.disabled = false; b.textContent = `Empezar los ${minutos} minutos`;
+      }
+    });
+    box.appendChild(b);
+    return box;
+  }
+
+  const finMs = new Date(ronda.cronometro_inicio).getTime() + minutos * 60000;
+  const numero = el('div', { style: 'font-size:52px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;' });
+  const pie = el('p', { class: 'text-tiny mt-2' });
+  const acciones = el('div', { class: 'btn-row mt-3' });
+  const silenciar = el('button', { class: 'btn btn-primary btn-sm', style: 'display:none;' }, 'Ya avisé — silenciar');
+  silenciar.addEventListener('click', () => {
+    callarAlarma(); silenciar.style.display = 'none'; soltarPantalla();
+  });
+  /* Si se recargó la página con el reloj ya corriendo, el navegador vuelve a
+     bloquear el audio: hace falta un toque nuevo para que la alarma pueda
+     sonar sola. Sin este botón la alarma fallaría en silencio, que es la peor
+     forma de fallar. */
+  const avisoSonido = el('div', { class: 'mt-2' }, [
+    el('p', { class: 'text-tiny', style: 'color:var(--warning);' },
+      'El sonido de la alarma está apagado porque se recargó la pantalla.'),
+    el('button', { class: 'btn btn-secondary btn-sm mt-1', onclick: () => {
+      armarAudio();
+      avisoSonido.remove();
+      toast('Listo, la alarma ya puede sonar.', 'success');
+    } }, 'Activar sonido'),
+  ]);
+
+  const reiniciar = el('button', { class: 'btn btn-secondary btn-sm' }, 'Reiniciar reloj');
+  reiniciar.addEventListener('click', async () => {
+    armarAudio();
+    try {
+      const r = await iniciarCronometroRonda(ronda.id, true);
+      desfaseReloj = Date.now() - new Date(r.inicio).getTime();
+      relojSincronizado = true;
+      cronoSonadaEn = null; callarAlarma(); mantenerPantallaEncendida(); refresh();
+    } catch (err) { toast(humanizeError(err), 'error'); }
+  });
+  acciones.append(silenciar, reiniciar);
+  box.append(numero, pie, acciones);
+  if (!cronoAudio) box.appendChild(avisoSonido);
+
+  const pintar = () => {
+    const restante = Math.round((finMs - ahoraServidor()) / 1000);
+    if (restante > 0) {
+      const mm = Math.floor(restante / 60);
+      const ss = restante % 60;
+      numero.textContent = `${mm}:${String(ss).padStart(2, '0')}`;
+      numero.style.color = restante <= 60 ? 'var(--warning)' : 'var(--text)';
+      box.style.background = '';
+      box.style.borderColor = '';
+      pie.textContent = `Termina a las ${new Date(finMs).toLocaleTimeString('es-MX', { hour: 'numeric', minute: '2-digit' })}`;
+      silenciar.style.display = 'none';
+      return;
+    }
+    numero.textContent = '0:00';
+    numero.style.color = 'var(--danger)';
+    box.style.background = 'var(--danger-dim)';
+    box.style.borderColor = 'var(--danger)';
+    pie.textContent = `Se acabó el tiempo de la ronda (${Math.round(minutos)} min). Diles que paren y anota los marcadores.`;
+    silenciar.style.display = '';
+    if (cronoSonadaEn !== ronda.id) { cronoSonadaEn = ronda.id; arrancarAlarma(); }
+  };
+  pintar();
+  sincronizarReloj().then(pintar);
+  cronoTick = setInterval(pintar, 500);
+  mantenerPantallaEncendida();
+  return box;
+}
+
+/* ============================================================
+   "A dónde va cada quien" — se abre solo al terminar una ronda.
+   Es el momento en que 12 personas salen de la cancha y preguntan
+   a la vez dónde les toca; recepción lee esto en voz alta.
+   ============================================================ */
+function abrirAcomodo(ronda, minutos, refresh) {
+  const content = el('div');
+  content.appendChild(el('div', { class: 'sheet-title' }, `Ronda ${ronda.round_number} — a dónde va cada quien`));
+  content.appendChild(el('p', { class: 'text-tiny mb-3' },
+    'Los que ganaron suben una cancha; los que perdieron bajan. Léelo en voz alta.'));
+
+  ronda.partidos.slice().sort((a, b) => a.court_number - b.court_number).forEach((m) => {
+    content.appendChild(el('div', { class: 'card mb-2' }, [
+      el('div', { class: 'text-tiny', style: 'letter-spacing:0.08em;text-transform:uppercase;color:var(--cyan);font-weight:700;' },
+        `Cancha ${m.court_number}`),
+      el('div', { style: 'font-size:17px;font-weight:800;margin-top:5px;overflow-wrap:anywhere;' }, nombreEquipo(m, 'team1')),
+      el('div', { class: 'text-tiny', style: 'margin:3px 0;color:var(--text-tertiary);' }, 'contra'),
+      el('div', { style: 'font-size:17px;font-weight:800;overflow-wrap:anywhere;' }, nombreEquipo(m, 'team2')),
+    ]));
+  });
+
+  const arrancar = el('button', { class: 'btn btn-primary mt-2' },
+    `Ya están en cancha — empezar los ${minutos} min`);
+  arrancar.addEventListener('click', async () => {
+    armarAudio();
+    arrancar.disabled = true; arrancar.textContent = 'Arrancando…';
+    try {
+      const r = await iniciarCronometroRonda(ronda.id);
+      desfaseReloj = Date.now() - new Date(r.inicio).getTime();
+      relojSincronizado = true;
+      cronoSonadaEn = null;
+      mantenerPantallaEncendida();
+      handle.close();
+      refresh();
+    } catch (err) {
+      toast(humanizeError(err), 'error');
+      arrancar.disabled = false; arrancar.textContent = `Ya están en cancha — empezar los ${minutos} min`;
+    }
+  });
+  content.appendChild(arrancar);
+  content.appendChild(el('button', { class: 'btn btn-ghost mt-2', onclick: () => handle.close() },
+    'Todavía no — cerrar'));
+
+  const handle = openSheet(content);
+}
+
+/* Una seccion que se abre y se cierra. Durante una noche hay que tener a la
+   vista SOLO la ronda que se esta jugando: todo lo demas estorba y ademas
+   pone al alcance del dedo botones que borran rondas. */
+function plegable(titulo, contenido) {
+  const caja = el('div', { class: 'mt-4' });
+  const cuerpo = el('div', { style: 'display:none;' }, contenido);
+  const chevron = el('span', { class: 'como-chevron', html: icon.chevronRight,
+    style: 'width:18px;height:18px;color:var(--text-tertiary);transition:transform 150ms ease;' });
+  const cabeza = el('button', {
+    class: 'row-between',
+    style: 'width:100%;background:none;border:none;text-align:left;color:inherit;padding:6px 0;',
+    onclick: () => {
+      const abierto = cuerpo.style.display !== 'none';
+      cuerpo.style.display = abierto ? 'none' : 'block';
+      chevron.style.transform = abierto ? 'none' : 'rotate(90deg)';
+    },
+  }, [
+    el('div', { style: 'font-weight:700;font-size:14px;' }, titulo),
+    chevron,
+  ]);
+  caja.append(cabeza, cuerpo);
+  return caja;
 }
 
 /* ============================================================
@@ -346,11 +665,15 @@ function renderRoster(esc, ws, registros, confirmados, enEspera, cupo, refresh) 
       ]),
       el('span', { class: `badge ${st.cls}` }, st.text),
     ]));
-    if (['confirmed', 'substitute'].includes(r.status) && esc.status !== 'completed') {
+    // Sustituto / no-show / quitar solo tienen sentido ANTES de arrancar. Una
+    // vez que la noche esta en juego, marcar "no vino" le cobraba la
+    // penalizacion al jugador y su lugar seguia sumando puntos en las rondas
+    // siguientes: quedaba castigado y premiado al mismo tiempo.
+    if (['confirmed', 'substitute'].includes(r.status) && esc.status === 'scheduled') {
       card.appendChild(el('div', { class: 'btn-row mt-2' }, [
         el('button', { class: 'btn btn-secondary btn-sm', onclick: () => abrirSustituto(r, refresh, ws.format) }, 'Sustituto'),
         el('button', { class: 'btn btn-secondary btn-sm', onclick: async () => {
-          const ok = await confirmSheet({ title: '¿No se presentó?', body: 'Se le descuenta la penalización de no-show sobre su puntaje de las últimas 6 noches.', confirmLabel: 'Sí, no vino', danger: true });
+          const ok = await confirmSheet({ title: '¿No se presentó?', body: 'Se le descuenta la penalización de no-show sobre su puntaje de las últimas 6 noches y se libera su lugar.', confirmLabel: 'Sí, no vino', danger: true });
           if (!ok) return;
           try { await marcarNoShow(r.id); toast('Marcado como no-show.', 'success'); refresh(); }
           catch (err) { toast(humanizeError(err), 'error'); }
@@ -521,6 +844,25 @@ function abrirCapturaResultado(m, onChange) {
     eq2.node,
   ]));
 
+  /* Confirmación en voz alta antes de guardar: el error más fácil de cometer
+     es teclear el marcador al revés, y así se ve de inmediato. */
+  const quienGana = el('div', { class: 'aviso aviso-ok mt-3', style: 'display:none;' });
+  content.appendChild(quienGana);
+  const repintarGanador = () => {
+    const a = Number(eq1.input.value), b = Number(eq2.input.value);
+    if (!eq1.input.value || !eq2.input.value || !Number.isFinite(a) || !Number.isFinite(b) || a === b) {
+      quienGana.style.display = 'none'; return;
+    }
+    quienGana.style.display = 'block';
+    quienGana.innerHTML = '';
+    quienGana.append(
+      el('strong', {}, 'Gana ' + nombreEquipo(m, a > b ? 'team1' : 'team2') + '. '),
+      `Suben a la cancha de arriba; los otros bajan.`);
+  };
+  eq1.input.addEventListener('input', repintarGanador);
+  eq2.input.addEventListener('input', repintarGanador);
+  repintarGanador();
+
   if (m.status === 'completed') {
     const nota = el('input', { class: 'input', type: 'text', placeholder: 'Motivo de la corrección (opcional)' });
     content.appendChild(el('div', { class: 'field mt-3' }, [el('label', {}, 'Nota de corrección'), nota]));
@@ -530,22 +872,21 @@ function abrirCapturaResultado(m, onChange) {
   const errBox = el('p', { class: 'text-tiny mt-2', style: 'color:var(--danger);display:none;' });
   content.appendChild(errBox);
 
-  const saveBtn = el('button', { class: 'btn btn-primary mt-3' }, 'Guardar marcador');
-  saveBtn.addEventListener('click', async () => {
-    errBox.style.display = 'none';
-    let sets;
-    try {
-      sets = construirSets(eq1, eq2);
-    } catch (e) {
-      errBox.textContent = e.message; errBox.style.display = 'block'; return;
-    }
+  /* Punto de oro: si al minuto 15 iban iguales, el reglamento dice que ese
+     game se define con un punto de oro. En vez de rebotarle un error a
+     recepción y dejar que haga la cuenta de cabeza, la app pregunta quién lo
+     ganó y guarda el marcador ya resuelto. */
+  const puntoOro = el('div', { class: 'aviso aviso-warn mt-3', style: 'display:none;' });
+  content.appendChild(puntoOro);
+
+  const guardar = async (sets, gp) => {
     saveBtn.disabled = true; saveBtn.textContent = 'Guardando…';
     try {
       if (m.status === 'completed') {
-        await corregirResultadoPartido(m.id, sets, content._nota ? content._nota.value.trim() || null : null);
+        await corregirResultadoPartido(m.id, sets, content._nota ? content._nota.value.trim() || null : null, gp);
         toast('Marcador corregido.', 'success');
       } else {
-        await registrarResultadoPartido(m.id, sets);
+        await registrarResultadoPartido(m.id, sets, gp);
         toast('Marcador guardado.', 'success');
       }
       handle.close();
@@ -554,6 +895,37 @@ function abrirCapturaResultado(m, onChange) {
       errBox.textContent = humanizeError(err); errBox.style.display = 'block';
       saveBtn.disabled = false; saveBtn.textContent = 'Guardar marcador';
     }
+  };
+
+  const preguntarPuntoDeOro = (n) => {
+    puntoOro.innerHTML = '';
+    puntoOro.style.display = 'block';
+    puntoOro.append(
+      el('div', { style: 'font-weight:800;margin-bottom:4px;' }, `Van ${n}-${n} y no puede quedar empatado.`),
+      el('div', { class: 'text-tiny mb-3' }, '¿Quién ganó el punto de oro? Ese game define la ronda.'));
+    [['team1', 1], ['team2', 2]].forEach(([lado, num]) => {
+      const b = el('button', { class: 'btn btn-secondary mt-2', style: 'text-align:left;' },
+        nombreEquipo(m, lado));
+      b.addEventListener('click', () => {
+        const sets = [{ team1: num === 1 ? n + 1 : n, team2: num === 2 ? n + 1 : n }];
+        guardar(sets, num);
+      });
+      puntoOro.appendChild(b);
+    });
+  };
+
+  const saveBtn = el('button', { class: 'btn btn-primary mt-3' }, 'Guardar marcador');
+  saveBtn.addEventListener('click', async () => {
+    errBox.style.display = 'none';
+    puntoOro.style.display = 'none';
+    let sets;
+    try {
+      sets = construirSets(eq1, eq2);
+    } catch (e) {
+      if (e.empate != null) { preguntarPuntoDeOro(e.empate); return; }
+      errBox.textContent = e.message; errBox.style.display = 'block'; return;
+    }
+    guardar(sets, null);
   });
   content.appendChild(saveBtn);
 
@@ -568,7 +940,9 @@ function construirSets(eq1, eq2) {
     throw new Error('Los games se anotan con números enteros de 0 en adelante.');
   }
   if (n1 === n2) {
-    throw new Error(`No se puede guardar ${n1}-${n2}: la ronda necesita un ganador. Si iban iguales al minuto 15, jueguen el punto de oro y anoten ese game.`);
+    const e = new Error(`No se puede guardar ${n1}-${n1}: la ronda necesita un ganador.`);
+    e.empate = n1;   // lo resuelve el punto de oro, no un mensaje de error
+    throw e;
   }
   return [{ team1: n1, team2: n2 }];
 }

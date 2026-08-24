@@ -611,6 +611,33 @@ export async function generarRondaInicial(escaleraId) {
   if (error) throw error;
   return data;
 }
+/* El cronometro de la ronda. Se arranca cuando recepcion ve que los 12 ya
+   estan en su cancha, no cuando se genera la ronda. La cuenta regresiva se
+   calcula desde la marca de tiempo del servidor, no contando en el telefono:
+   asi sobrevive a recargas y a que se apague la pantalla. */
+export async function iniciarCronometroRonda(roundId, reiniciar = false) {
+  const { data, error } = await supabase.rpc('iniciar_cronometro_ronda', {
+    p_round_id: roundId, p_reiniciar: reiniciar,
+  });
+  if (error) throw error;
+  return data;
+}
+
+/* La hora del servidor, para no depender de que el reloj del telefono este
+   bien puesto. */
+export async function horaServidor() {
+  const { data, error } = await supabase.rpc('ahora');
+  if (error) throw error;
+  return new Date(data);
+}
+
+/* Lo que un jugador necesita a media noche: cancha, companero y rivales. */
+export async function getMiRondaActual() {
+  const { data, error } = await supabase.rpc('mi_ronda_actual');
+  if (error) throw error;
+  return Array.isArray(data) ? (data[0] || null) : (data || null);
+}
+
 export async function generarSiguienteRonda(escaleraId) {
   const { data, error } = await supabase.rpc('generar_siguiente_ronda', { p_escalera_id: escaleraId });
   if (error) throw error;

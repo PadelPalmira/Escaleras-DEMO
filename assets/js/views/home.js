@@ -4,6 +4,7 @@ import {
   getMyProfile, getMiCategoria, getMisRegistros, tiersElegiblesPorCategoria,
   getEventoLiguillaActivo, getMiCalificacionLiguilla,
   esAdminOMaestro, esMaestro, getEscalerasAdmin, getConteosRegistros,
+  getMiRondaActual, horaServidor,
 } from '../api.js';
 import { navigate } from '../router.js';
 import { abrirNoche } from './admin_escaleras.js';
@@ -33,6 +34,16 @@ export async function renderHome() {
 async function renderInicioJugador(profile) {
   const registros = await getMisRegistros({ soloFuturas: true });
   const categoria = profile ? await getMiCategoria(profile.id) : null;
+  // Si la noche está en juego ahorita, esto es lo único que le importa al
+  // jugador: en qué cancha le toca y con quién.
+  let miRonda = null;
+  try { miRonda = await getMiRondaActual(); } catch { miRonda = null; }
+  // La cuenta regresiva se mide contra el reloj del SERVIDOR: el del telefono
+  // de cada jugador puede estar mal puesto y el numero se veria absurdo.
+  let desfaseMs = 0;
+  if (miRonda && miRonda.cronometro_inicio) {
+    try { desfaseMs = Date.now() - (await horaServidor()).getTime(); } catch { desfaseMs = 0; }
+  }
 
   const hoy = todayISO();
   const registroHoy = registros.find((r) => r.escaleras && r.escaleras.session_date === hoy && ['confirmed', 'substitute', 'waitlist'].includes(r.status));
@@ -49,8 +60,15 @@ async function renderInicioJugador(profile) {
     el('div', { class: 'avatar-btn', style: 'width:44px;height:44px;font-size:15px;' }, initials(profile && profile.full_name)),
   ]));
 
+  // Tarjeta de la ronda en curso — manda sobre todo lo demás.
+  if (miRonda) {
+    wrap.appendChild(renderMiRonda(miRonda, desfaseMs));
+  }
+
   // Tarjeta "hoy juegas"
-  if (registroHoy) {
+  if (miRonda) {
+    // Ya se está jugando: la tarjeta de arriba lo dice todo.
+  } else if (registroHoy) {
     const esc = registroHoy.escaleras;
     const ws = esc.weekday_schedule;
     wrap.appendChild(
@@ -91,13 +109,19 @@ async function renderInicioJugador(profile) {
             el('div', { class: 'stat-value' }, categoria.rank != null ? `#${categoria.rank}` : '—'),
             el('div', { class: 'stat-label' }, 'Posición'),
           ]),
+          // El numero grande tiene que ser EL MISMO que el del Ranking: el
+          // promedio por noche. Antes aqui salia la suma y en Ranking el
+          // promedio, y eran dos respuestas distintas a "cuantos puntos tengo".
           el('div', { class: 'stat-tile' }, [
-            el('div', { class: 'stat-value' }, categoria.rolling_points != null ? Number(categoria.rolling_points).toFixed(0) : '—'),
-            el('div', { class: 'stat-label' }, 'Puntos'),
+            el('div', { class: 'stat-value' }, (() => {
+              const n = Number(categoria.escaleras_counted || 0);
+              return n > 0 ? (Number(categoria.rolling_points) / n).toFixed(0) : '—';
+            })()),
+            el('div', { class: 'stat-label' }, 'Prom. x noche'),
           ]),
           el('div', { class: 'stat-tile' }, [
             el('div', { class: 'stat-value' }, categoria.escaleras_counted != null ? categoria.escaleras_counted : '—'),
-            el('div', { class: 'stat-label' }, 'Escaleras' ),
+            el('div', { class: 'stat-label' }, 'Noches' ),
           ]),
         ]),
       ])
@@ -310,4 +334,67 @@ function tarjetaAdmin(e, conteo, esHoy) {
     c.espera > 0 ? el('p', { class: 'text-tiny mt-1' }, `${c.espera} en lista de espera`) : null,
     el('button', { class: `btn ${clase} mt-4`, onclick: () => irANoche(e.id) }, etiqueta),
   ]);
+}
+
+/* ============================================================
+   "Te toca en la cancha X con Fulano"
+   ------------------------------------------------------------
+   Cada ronda los 12 jugadores salen de la cancha y preguntan lo
+   mismo. Esto se los contesta desde su propio teléfono, sin que
+   recepción tenga que gritarlo doce veces.
+   ============================================================ */
+function renderMiRonda(r, desfaseMs = 0) {
+  const card = el('div', { class: 'card card-hero mt-4' });
+  card.appendChild(el('div', { class: 'row-between' }, [
+    el('div', { class: 'text-tiny', style: 'letter-spacing:0.08em;text-transform:uppercase;font-weight:700;color:var(--cyan);' },
+      `Ronda ${r.ronda} de ${r.tope} · jugando ahora`),
+    r.marcador_puesto
+      ? el('span', { class: 'badge badge-success' }, `${r.mis_games}-${r.sus_games}`)
+      : null,
+  ]));
+
+  card.appendChild(el('div', { style: 'font-size:34px;font-weight:800;line-height:1.1;margin-top:6px;' },
+    `Cancha ${r.cancha}`));
+
+  card.appendChild(el('div', { class: 'mt-3' }, [
+    el('div', { class: 'text-tiny' }, r.formato === 'parejas' ? 'Tu pareja' : 'Juegas con'),
+    el('div', { style: 'font-weight:700;font-size:16px;' }, r.companero || '—'),
+  ]));
+  card.appendChild(el('div', { class: 'mt-2' }, [
+    el('div', { class: 'text-tiny' }, 'Contra'),
+    el('div', { style: 'font-weight:700;font-size:16px;' },
+      [r.rival1, r.rival2].filter(Boolean).join(' y ') || '—'),
+  ]));
+
+  // Cuenta regresiva, si recepción ya arrancó el reloj de esta ronda.
+  if (r.cronometro_inicio && !r.marcador_puesto) {
+    const largo = Number(r.minutos_por_ronda || 15) * 60000;
+    const fin = new Date(r.cronometro_inicio).getTime() + largo;
+    const reloj = el('div', { class: 'mt-3', style: 'font-size:15px;font-weight:700;' });
+    const pintar = () => {
+      // Nunca mas de lo que dura la ronda: si algo sale raro con los relojes,
+      // es mejor no mostrar nada que mostrar un numero imposible.
+      const seg = Math.min(Math.round((fin - (Date.now() - desfaseMs)) / 1000), Math.round(largo / 1000));
+      if (seg > 0) {
+        reloj.textContent = `Quedan ${Math.floor(seg / 60)}:${String(seg % 60).padStart(2, '0')} de la ronda`;
+        reloj.style.color = seg <= 60 ? 'var(--warning)' : 'var(--text-secondary)';
+      } else {
+        reloj.textContent = 'Se acabó el tiempo de la ronda.';
+        reloj.style.color = 'var(--danger)';
+      }
+      if (seg > Math.round(largo / 1000)) reloj.textContent = '';
+    };
+    pintar();
+    const t = setInterval(() => {
+      if (!reloj.isConnected) { clearInterval(t); return; }
+      pintar();
+    }, 1000);
+    card.appendChild(reloj);
+  }
+
+  if (r.marcador_puesto) {
+    card.appendChild(el('p', { class: 'text-tiny mt-3' },
+      'Ya está capturado el marcador de esta ronda. Espera a que recepción arme la siguiente.'));
+  }
+  return card;
 }

@@ -324,7 +324,7 @@ export function generarSiguienteRonda(db, escaleraId, { ahora }) {
    registrar_resultado_partido / calcular_puntos_match /
    otorgar_puntos_seat
    ============================================================ */
-export function registrarResultadoPartido(db, matchId, sets, { ahora, uid, corregir = false }) {
+export function registrarResultadoPartido(db, matchId, sets, { ahora, uid, corregir = false, goldenPointWinner = null }) {
   const m = db.round_matches.find((x) => x.id === matchId);
   if (!m) throw new Error('Partido no encontrado.');
   const rd = db.rounds.find((r) => r.id === m.round_id);
@@ -347,6 +347,7 @@ export function registrarResultadoPartido(db, matchId, sets, { ahora, uid, corre
   m.score_team2 = res.totales.team2.sets;
   m.games_team1 = res.totales.team1.games;
   m.games_team2 = res.totales.team2.games;
+  m.golden_point_winner = goldenPointWinner;
   m.status = 'completed';
   m.entered_by = uid;
   m.entered_at = ahora().toISOString();

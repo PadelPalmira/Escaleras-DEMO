@@ -697,6 +697,19 @@ function comenzarEscaleraMock(escId) {
   if (e.status === 'completed') throw new Error('Esta noche ya se cerró.');
   if (e.status === 'in_progress') throw new Error('Esta noche ya está en juego.');
 
+  // Solo se arranca la noche del día que se juega: la lista del admin muestra
+  // las 5 noches de la semana iguales y un dedazo el lunes en la tarjeta del
+  // miércoles le cerraba la convocatoria a esa otra noche sin forma de
+  // deshacerlo.
+  const hoyClub = fechaClub(DEMO.ahora());
+  const dm = (f) => `${String(f).slice(8)}/${String(f).slice(5, 7)}`;
+  if (e.session_date > hoyClub) {
+    throw new Error(`Esa noche es del ${dm(e.session_date)} y hoy es ${dm(hoyClub)}. Solo se puede arrancar la noche del día que se juega.`);
+  }
+  if (e.session_date < hoyClub) {
+    throw new Error(`Esa noche era del ${dm(e.session_date)} y ya pasó. No se puede arrancar.`);
+  }
+
   const cap = ws.capacity != null ? ws.capacity : 12;
   const conf = ocupadosDe(escId);
   const espera = enEsperaDe(escId).length;
@@ -1206,6 +1219,62 @@ export function createClient() {
         reg.cubierto_por_lista_espera = true;
         return { data: id, error: null };
       }
+      if (name === 'ahora') {
+        return { data: DEMO.ahora().toISOString(), error: null };
+      }
+      if (name === 'iniciar_cronometro_ronda') {
+        const rd = DB.rounds.find((r) => r.id === params.p_round_id);
+        if (!rd) return { data: null, error: { message: 'Ronda no encontrada.' } };
+        const escC = DB.escaleras.find((e) => e.id === rd.escalera_id);
+        if (!escC || escC.status !== 'in_progress') {
+          return { data: null, error: { message: 'Esa noche no está en juego.' } };
+        }
+        if (rd.cronometro_inicio && !params.p_reiniciar) {
+          return { data: null, error: { message: 'El cronómetro de esta ronda ya está corriendo.' } };
+        }
+        rd.cronometro_inicio = DEMO.ahora().toISOString();
+        persistir();
+        const minC = cfg('minutos_por_ronda', 15);
+        return { data: {
+          round_id: rd.id, inicio: rd.cronometro_inicio, minutos: minC,
+          termina: new Date(DEMO.ahora().getTime() + minC * 60000).toISOString(),
+        }, error: null };
+      }
+      if (name === 'mi_ronda_actual') {
+        const uid = uidActual();
+        const hoyR = fechaClub(DEMO.ahora());
+        const noche = DB.escaleras.find((e) => e.status === 'in_progress' && e.session_date === hoyR
+          && ['individual', 'parejas'].includes(e.format)
+          && DB.escalera_registrations.some((r) => r.escalera_id === e.id && r.player_id === uid
+            && ['confirmed', 'substitute'].includes(r.status)));
+        if (!noche) return { data: [], error: null };
+        const ultima = DB.rounds.filter((r) => r.escalera_id === noche.id)
+          .sort((a, b) => b.round_number - a.round_number)[0];
+        if (!ultima) return { data: [], error: null };
+        const mp = DB.round_matches.find((m) => m.round_id === ultima.id
+          && [m.team1_player1, m.team1_player2, m.team2_player1, m.team2_player2].includes(uid));
+        if (!mp) return { data: [], error: null };
+        const nom = (id) => (DB.profiles.find((p) => p.id === id) || {}).full_name || null;
+        const lado = [mp.team1_player1, mp.team1_player2].includes(uid) ? 1 : 2;
+        const comp = lado === 1
+          ? (mp.team1_player1 === uid ? mp.team1_player2 : mp.team1_player1)
+          : (mp.team2_player1 === uid ? mp.team2_player2 : mp.team2_player1);
+        const wsR = wsById(noche.weekday_schedule_id) || {};
+        return { data: [{
+          escalera_id: noche.id, session_date: noche.session_date,
+          formato: wsR.format, categoria: wsR.category,
+          round_id: ultima.id, ronda: ultima.round_number,
+          tope: cfg('max_rondas_escalera', 7), cancha: mp.court_number,
+          companero: nom(comp),
+          rival1: nom(lado === 1 ? mp.team2_player1 : mp.team1_player1),
+          rival2: nom(lado === 1 ? mp.team2_player2 : mp.team1_player2),
+          marcador_puesto: mp.status === 'completed',
+          mis_games: lado === 1 ? mp.games_team1 : mp.games_team2,
+          sus_games: lado === 1 ? mp.games_team2 : mp.games_team1,
+          cronometro_inicio: ultima.cronometro_inicio || null,
+          minutos_por_ronda: cfg('minutos_por_ronda', 15),
+        }], error: null };
+      }
       if (name === 'comenzar_escalera') {
         return envolver(() => comenzarEscaleraMock(params.p_escalera_id));
       }
@@ -1219,11 +1288,27 @@ export function createClient() {
       if (name === 'cancelar_escalera_admin') {
         const esc = DB.escaleras.find((e) => e.id === params.p_escalera_id);
         if (!esc) return { data: null, error: { message: 'Convocatoria no encontrada.' } };
+        if (esc.status === 'completed') {
+          return { data: null, error: { message: 'Esta escalera ya fue cerrada: no se puede cancelar.' } };
+        }
+        // Cancelar una noche con marcadores capturados dejaba esos puntos
+        // huerfanos: seguian en el historial del jugador pero desaparecian del
+        // ranking, porque el ranking solo cuenta noches cerradas.
+        const rondasDe = DB.rounds.filter((r) => r.escalera_id === esc.id).map((r) => r.id);
+        const capturados = DB.round_matches.filter(
+          (m) => rondasDe.includes(m.round_id) && m.status === 'completed').length;
+        if (capturados > 0) {
+          return { data: null, error: { message: `Esta noche ya tiene ${capturados} marcador(es) capturados: esos puntos ya son de los jugadores. Termina de capturar y cierra la noche; si algo salió mal, corrige los marcadores.` } };
+        }
+        DB.round_matches = DB.round_matches.filter((m) => !rondasDe.includes(m.round_id));
+        DB.rounds = DB.rounds.filter((r) => r.escalera_id !== esc.id);
         esc.status = 'cancelled';
         esc.cancel_reason = params.p_motivo;
+        esc.not_penalized = true;
         DB.escalera_registrations
           .filter((r) => r.escalera_id === esc.id && ACTIVOS.includes(r.status))
           .forEach((r) => { r.status = 'cancelled_ontime'; r.cancelled_at = DEMO.ahora().toISOString(); });
+        persistir();
         return { data: null, error: null };
       }
       if (name === 'autoprogramar_liguilla_mes') {
@@ -1357,12 +1442,13 @@ export function createClient() {
         return envolver(() => motor.generarSiguienteRonda(DB, params.p_escalera_id, ctx()));
       }
       if (name === 'registrar_resultado_partido') {
-        return envolver(() => motor.registrarResultadoPartido(DB, params.p_match_id, params.p_sets, ctx()));
+        return envolver(() => motor.registrarResultadoPartido(DB, params.p_match_id, params.p_sets,
+          { ...ctx(), goldenPointWinner: params.p_golden_point_winner ?? null }));
       }
       if (name === 'corregir_resultado_partido') {
         return envolver(() => {
           const r = motor.registrarResultadoPartido(DB, params.p_match_id, params.p_sets,
-            { ...ctx(), corregir: true });
+            { ...ctx(), corregir: true, goldenPointWinner: params.p_golden_point_winner ?? null });
           const m = DB.round_matches.find((x) => x.id === params.p_match_id);
           if (m && m.sets_json) m.sets_json.nota_correccion = params.p_nota || null;
           return r;

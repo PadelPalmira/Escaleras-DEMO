@@ -4,6 +4,7 @@ import { navigate } from '../router.js';
 import {
   getMyProfile, updateMyProfile, getMiHistorialPuntos, signOut,
   getMisMultas, getMisSuspensiones, getMisNotificaciones, marcarNotificacionLeida,
+  getMiCategoria, getAjusteNum,
 } from '../api.js';
 
 const FINE_STATUS = { pending: { text: 'Pendiente', cls: 'badge-warning' }, paid: { text: 'Pagada', cls: 'badge-success' }, waived: { text: 'Condonada', cls: 'badge-neutral' } };
@@ -28,11 +29,14 @@ const REASON_LABEL = {
 export async function renderPerfil() {
   const profile = await getMyProfile();
   if (!profile) return el('div', { class: 'empty-state' }, 'No se pudo cargar tu perfil.');
-  const [historial, notificaciones, multas, suspensiones] = await Promise.all([
+  const [historial, notificaciones, multas, suspensiones, categoria, minNoches, semanas] = await Promise.all([
     getMiHistorialPuntos(profile.id, 20),
     getMisNotificaciones(profile.id, 20),
     getMisMultas(profile.id),
     getMisSuspensiones(profile.id),
+    getMiCategoria(profile.id),
+    getAjusteNum('min_noches_para_mover', 3),
+    getAjusteNum('semanas_vigencia_puntos', 8),
   ]);
 
   const wrap = el('div');
@@ -149,6 +153,38 @@ export async function renderPerfil() {
     wrap.appendChild(list);
   }
 
+  /* El puente entre esta lista y el numero del Ranking. Sin esto un jugador
+     suma sus lineas a mano, le da 553 y en Ranking ve 92: parece un error de
+     la app y no lo es. */
+  wrap.appendChild(el('div', { class: 'section-title' }, 'Tu puntaje móvil'));
+  if (categoria) {
+    const noches = Number(categoria.escaleras_counted || 0);
+    const total = Number(categoria.rolling_points || 0);
+    const prom = noches > 0 ? total / noches : 0;
+    const provisional = noches < minNoches;
+    wrap.appendChild(el('div', { class: 'card' }, [
+      el('div', { class: 'row-between' }, [
+        el('div', {}, [
+          el('div', { style: 'font-size:30px;font-weight:800;line-height:1;' }, noches > 0 ? prom.toFixed(0) : '—'),
+          el('div', { class: 'text-tiny mt-1' }, 'puntos por noche'),
+        ]),
+        provisional
+          ? el('span', { class: 'badge badge-warning' }, 'Provisional')
+          : el('span', { class: 'badge badge-neutral' }, `${noches} noches`),
+      ]),
+      el('p', { class: 'text-tiny mt-3' },
+        noches > 0
+          ? `Es el promedio de tus últimas ${noches} escaleras (${total.toFixed(0)} pts en total). Ese promedio es el que te ordena en el Ranking, no la suma.`
+          : 'Todavía no tienes noches jugadas dentro de la ventana.'),
+      provisional
+        ? el('p', { class: 'text-tiny mt-1', style: 'color:var(--text-tertiary);' },
+            `Con menos de ${minNoches} noches tu puntaje es provisional: no subes ni bajas de categoría hasta completarlas.`)
+        : null,
+      el('p', { class: 'text-tiny mt-1', style: 'color:var(--text-tertiary);' },
+        `Una noche jugada cuenta durante ${semanas} semanas; después sale de tu ventana.`),
+    ]));
+  }
+
   // Historial de puntos
   wrap.appendChild(el('div', { class: 'section-title' }, 'Historial de puntos'));
   if (!historial || historial.length === 0) {
@@ -163,6 +199,10 @@ export async function renderPerfil() {
           el('div', {}, [
             el('div', { style: 'font-weight:600;font-size:13.5px;' }, REASON_LABEL[h.reason] || h.reason),
             el('div', { class: 'text-tiny' }, formatFechaHora(h.created_at)),
+            // De que ronda y que cancha salio cada linea: es lo que un jugador
+            // necesita para revisar sus propios puntos sin preguntarle a nadie.
+            h.notes ? el('div', { class: 'text-tiny', style: 'color:var(--text-tertiary);' },
+              String(h.notes).split(' | ')[0]) : null,
           ]),
           el('div', { style: `font-weight:800;font-variant-numeric:tabular-nums;color:${positivo ? 'var(--success)' : 'var(--danger)'}` }, formatPuntos(h.points)),
         ])
