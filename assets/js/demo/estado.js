@@ -6,7 +6,7 @@
    nada sale a internet y nada toca la app real.
    ============================================================ */
 
-const LLAVE_BD = 'escaleras_demo_bd_v1';
+const LLAVE_BD = 'escaleras_demo_bd_v2';
 const LLAVE_ESTADO = 'escaleras_demo_estado_v1';
 
 export const CLUB_TZ = 'America/Mexico_City';

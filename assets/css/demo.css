@@ -119,6 +119,12 @@ body.con-demo-barra .toast-wrap { top: calc(var(--demo-alto) + var(--header-h) +
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
 }
 
+/* Cuando la app abre una hoja (capturar marcador, confirmar, agregar gente),
+   el tutorial se quita de encima: si no, la pastilla flota sobre la hoja y
+   tapa un campo justo cuando recepción lo está usando. */
+body:has(.sheet-backdrop) .demo-tuto,
+body:has(.sheet-backdrop) .demo-tuto-fondo { display: none !important; }
+
 /* Fondo oscuro detrás del tutorial abierto en pantallas chicas. */
 .demo-tuto-fondo {
   position: fixed; inset: 0; z-index: 870;

@@ -93,10 +93,29 @@ function renderWeekdayRow(ws) {
   return row;
 }
 
+// Estas horas no las lee solo la app: también están escritas en las tareas
+// automáticas del servidor. Si se cambian aquí nada más, la app diría una hora
+// y el sistema haría otra — así que se muestran, pero no se editan desde aquí.
+const HORARIOS_DEL_SISTEMA = {
+  convocatoria_open_time: 'Hora en que se publican las convocatorias de la semana.',
+  privilege_close_time: 'Hora del domingo en que se acaba la reserva de lugares del ranking.',
+  category_recalc_time: 'Hora del domingo en que se recalculan las categorías.',
+  category_recalc_weekday: 'Día de la semana del recálculo de categorías.',
+  timezone: 'Zona horaria oficial del club.',
+};
+
 function renderSettingRow(s) {
   const wrapper = el('div');
   wrapper.appendChild(el('div', { style: 'font-weight:700;' }, s.key));
   if (s.description) wrapper.appendChild(el('p', { class: 'text-tiny mt-1 mb-2' }, s.description));
+
+  if (HORARIOS_DEL_SISTEMA[s.key]) {
+    wrapper.appendChild(el('div', { class: 'input mt-2', style: 'background:var(--surface-2);color:var(--text-tertiary);' },
+      String(s.value)));
+    wrapper.appendChild(el('p', { class: 'text-tiny mt-1', style: 'color:var(--text-tertiary);' },
+      'Esta hora también vive en las tareas automáticas del servidor. Para cambiarla hay que cambiarla en los dos lados a la vez: avísale a quien lleva el sistema.'));
+    return wrapper;
+  }
 
   let getInputValue;
   if (s.key === 'bono_posicion_final_por_cancha' && s.value && typeof s.value === 'object') {

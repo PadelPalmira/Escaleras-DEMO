@@ -24,6 +24,10 @@ import { DEMO, cargarBd, guardarBd, borrarTodo, fechaClub, instanteClub, sumarDi
 
 /* ---------- la base de datos de la demo ---------- */
 
+// El motor necesita saber "que dia es hoy" para caducar las noches viejas:
+// se le inyecta el reloj de la demo (maquina del tiempo incluida).
+motor.setHoyMotor(() => fechaClub(DEMO.ahora()));
+
 let DB = cargarBd();
 if (!DB || !DB.profiles || !DB.profiles.length) {
   DB = construirDemo(fechaClub(new Date()));
@@ -178,36 +182,50 @@ function reordenarParejasVentana(escId) {
   const esc = DB.escaleras.find((e) => e.id === escId);
   if (!esc || esc.format !== 'parejas') return;
   const ws = wsById(esc.weekday_schedule_id) || {};
-  const maxParejas = Math.floor((ws.capacity != null ? ws.capacity : 12) / 2);
+  const cap = ws.capacity != null ? ws.capacity : 12;
+  const reservados = Math.min(cfg('lugares_reservados_ranking', 8), cap);
+  const maxPriv = Math.floor(reservados / 2);
+  const maxLibre = Math.floor((cap - reservados) / 2);
   const pv = motor.puntosVivos(DB);
   const pts = (id) => (pv.find((x) => x.player_id === id) || {}).rolling_points || 0;
 
-  const grupos = new Map();
-  DB.escalera_registrations
-    .filter((r) => r.escalera_id === escId && r.partner_id && ['confirmed', 'waitlist'].includes(r.status))
-    .forEach((r) => {
-      const clave = [r.player_id, r.partner_id].sort().join('|');
-      const g = grupos.get(clave) || { clave, filas: [], ca: r.created_at };
-      g.filas.push(r);
-      if (String(r.created_at) < String(g.ca)) g.ca = r.created_at;
-      grupos.set(clave, g);
-    });
+  const agrupar = (porRanking) => {
+    const grupos = new Map();
+    DB.escalera_registrations
+      .filter((r) => r.escalera_id === escId && r.partner_id
+        && ['confirmed', 'waitlist'].includes(r.status)
+        && !!r.via_privilegio === porRanking)
+      .forEach((r) => {
+        const clave = [r.player_id, r.partner_id].sort().join('|');
+        const g = grupos.get(clave) || { clave, filas: [], ca: r.created_at };
+        g.filas.push(r);
+        if (String(r.created_at) < String(g.ca)) g.ca = r.created_at;
+        grupos.set(clave, g);
+      });
+    return [...grupos.values()];
+  };
 
-  [...grupos.values()]
-    .map((g) => {
-      const [a, b] = g.clave.split('|');
-      return { ...g, promedio: (pts(a) + pts(b)) / 2 };
-    })
-    .sort((x, y) => y.promedio - x.promedio || String(x.ca).localeCompare(String(y.ca)))
-    .forEach((g, i) => {
-      const dentro = i + 1 <= maxParejas;
+  const aplicar = (lista, cupo) => {
+    lista.forEach((g, i) => {
+      const dentro = i < cupo;
       g.filas.forEach((r) => {
         r.status = dentro ? 'confirmed' : 'waitlist';
         r.confirmed_at = dentro ? (r.confirmed_at || DEMO.ahora().toISOString()) : null;
-        r.waitlist_position = dentro ? null : i + 1 - maxParejas;
+        r.waitlist_position = dentro ? null : i - cupo + 1;
+        r.updated_at = DEMO.ahora().toISOString();
       });
     });
-  persistir();
+  };
+
+  // Las parejas que entraron por el ranking compiten entre ellas por los
+  // lugares reservados, ordenadas por el promedio de puntos de las dos
+  // personas. Las que tomaron un lugar abierto van por orden de llegada.
+  aplicar(agrupar(true).map((g) => {
+    const [a, b] = g.clave.split('|');
+    return { ...g, promedio: (pts(a) + pts(b)) / 2 };
+  }).sort((x, y) => y.promedio - x.promedio || String(x.ca).localeCompare(String(y.ca))), maxPriv);
+
+  aplicar(agrupar(false).sort((x, y) => String(x.ca).localeCompare(String(y.ca))), maxLibre);
 }
 
 /* ---------- notificar ---------- */
@@ -327,6 +345,9 @@ function misConvocatorias(uid) {
         mi_sustituto_nombre: sustituto
           ? ((DB.profiles.find((p) => p.id === sustituto.player_id) || {}).full_name || null) : null,
         horas_faltantes: horasFaltantes(e),
+        lugares_reservados: Math.min(cfg('lugares_reservados_ranking', 8), ws.capacity != null ? ws.capacity : 12),
+        ocupados_privilegio: DB.escalera_registrations.filter(
+          (r) => r.escalera_id === e.id && ['confirmed', 'substitute'].includes(r.status) && r.via_privilegio).length,
       };
     })
     .filter((f) => !f.categoria || !miCat || f.categoria === miCat || f.mi_registro_id);
@@ -360,21 +381,51 @@ function registrarJugadorMock(params) {
     return { data: null, error: { message: 'La convocatoria de esta semana todavía no abre. Abre el domingo a las 10:00 am.' } };
   }
 
+  // Cada noche es de una categoría: antes la app leía la categoría y nunca la
+  // usaba, así que un jugador de B se podía anotar a la noche de A.
+  if (ws.category && !soyAdmin) {
+    const miCat = catEfectivaDe(params.p_player_id);
+    if (miCat && miCat !== ws.category) {
+      return { data: null, error: { message: `Esa noche es de Categoría ${ws.category}. Esta semana tu categoría es la ${miCat}: anótate a la convocatoria de tu categoría, o habla con recepción.` } };
+    }
+    if (params.p_partner_id) {
+      const catPar = catEfectivaDe(params.p_partner_id);
+      if (catPar && catPar !== ws.category) {
+        return { data: null, error: { message: `La persona que elegiste como pareja es de Categoría ${catPar} y esta noche es de Categoría ${ws.category}.` } };
+      }
+    }
+  }
+
+  const reservados = Math.min(cfg('lugares_reservados_ranking', 8), cap);
+  const abiertos = cap - reservados;
+  const ocupPriv = DB.escalera_registrations.filter(
+    (r) => r.escalera_id === esc.id && ['confirmed', 'substitute'].includes(r.status) && r.via_privilegio).length;
+  const ocupLibre = ocupados - ocupPriv;
+
   let status; let mensaje; let via = false;
   if (v.abierta && !soyAdmin) {
     if (params.p_a_lista_espera) {
       status = 'waitlist';
       mensaje = `Quedaste en lista de espera. A las ${horaCierre} del domingo entran automático los primeros de la lista si sobran lugares.`;
-    } else if (!ventaja) {
-      return { data: null, error: { message: `Hasta las ${horaCierre} del domingo los lugares están apartados para el top ${topN} del ranking de tu categoría. Puedes anotarte a la lista de espera: si a esa hora sobran lugares, entras automático por orden de llegada.` } };
+    } else if (ventaja) {
+      // El top aparta solo sus lugares reservados. Si ya se llenaron, se forma:
+      // los abiertos son para el resto de la categoría hasta las 6 pm.
+      if (ocupPriv + necesita <= reservados) {
+        via = true;
+        status = 'confirmed';
+        mensaje = ws.format === 'parejas'
+          ? `Lugar apartado con su ventaja de ranking. Es provisional hasta las ${horaCierre} del domingo: las parejas se ordenan por el promedio de puntos de los dos.`
+          : 'Lugar apartado con tu ventaja de ranking. Ya estás dentro.';
+      } else {
+        status = 'waitlist';
+        mensaje = `Los ${reservados} lugares apartados para el ranking ya se llenaron. Los otros ${abiertos} son para el resto de la categoría hasta las ${horaCierre}; quedaste en lista de espera y entras automático si a esa hora sobra alguno.`;
+      }
+    } else if (ocupLibre + necesita <= abiertos) {
+      status = 'confirmed';
+      mensaje = `Tomaste uno de los ${abiertos} lugares que se guardan para los que no van en el top del ranking. Ya estás dentro.`;
     } else {
-      via = true;
-      status = ocupados + necesita <= cap ? 'confirmed' : 'waitlist';
-      mensaje = status === 'confirmed'
-        ? (ws.format === 'parejas'
-          ? `Lugar apartado con tu ventaja de ranking. Es provisional hasta las ${horaCierre} del domingo: las parejas se ordenan por el promedio de puntos de los dos.`
-          : 'Lugar apartado con tu ventaja de ranking. Ya estás dentro.')
-        : 'Los lugares ya están llenos — quedaste en lista de espera.';
+      status = 'waitlist';
+      mensaje = `Los ${abiertos} lugares abiertos ya se llenaron. Quedaste en lista de espera: a las ${horaCierre} del domingo entran los primeros si el top ${topN} no ocupó todos sus lugares.`;
     }
   } else {
     status = (ocupados + necesita <= cap && !params.p_a_lista_espera) ? 'confirmed' : 'waitlist';
@@ -462,11 +513,10 @@ function previewCancelacionMock(regId) {
   const dentro = horas >= corte;
   const pct = cfg('late_cancel_penalty_pct', 15);
 
-  const mes = esc ? esc.session_date.slice(0, 7) : '';
-  const puntosMes = DB.points_ledger
-    .filter((p) => p.player_id === reg.player_id && p.month_key === mes)
-    .reduce((s, p) => s + Number(p.points), 0);
-  const puntosEstimados = motor.round2(Math.max(puntosMes, 0) * pct / 100);
+  // La penalizacion se cobra sobre el puntaje MOVIL, no sobre los puntos del
+  // mes: antes faltar el dia 1 salia gratis y el dia 30 costaba una fortuna.
+  const movil = (motor.puntosVivos(DB).find((x) => x.player_id === reg.player_id) || {}).rolling_points || 0;
+  const puntosEstimados = motor.round2(Math.max(movil, 0) * pct / 100);
 
   const espera = esc ? enEsperaDe(esc.id).length : 0;
   const arrastra = !!(ws && ws.format === 'parejas' && reg.partner_id);
@@ -484,12 +534,12 @@ function previewCancelacionMock(regId) {
   } else if (!dentro && espera === 0) {
     titulo = 'Esta baja sí tiene penalización';
     mensaje = `Faltan menos de ${corte} horas y no hay nadie en lista de espera que pueda tomar tu lugar, `
-      + `así que aplica la penalización de ${pct}% de tus puntos del mes (aprox. ${puntosEstimados} pts). `
+      + `así que aplica la penalización de ${pct}% de tu puntaje de las últimas 6 noches (aprox. ${puntosEstimados} pts). `
       + 'Si consigues sustituto o alguien entra de lista de espera, no se te cobra.';
   } else if (!dentro) {
     titulo = 'Estás fuera del plazo sin penalización';
     mensaje = `Faltan menos de ${corte} horas, pero hay ${espera} en lista de espera. `
-      + `Si alguien toma tu lugar de inmediato no hay penalización; si no, aplica el ${pct}% de tus puntos del mes.`;
+      + `Si alguien toma tu lugar de inmediato no hay penalización; si no, aplica el ${pct}% de tu puntaje de las últimas 6 noches.`;
   } else {
     titulo = 'Baja sin penalización';
     mensaje = `Todavía faltan más de ${corte} horas para el evento, así que no hay ninguna penalización.`;
@@ -552,16 +602,16 @@ function cancelarRegistroMock(regId) {
   let penal = 0;
   if (reg.status === 'cancelled_late' && !cubierto && esc) {
     const mes = esc.session_date.slice(0, 7);
-    const puntosMes = DB.points_ledger
-      .filter((p) => p.player_id === reg.player_id && p.month_key === mes)
-      .reduce((s, p) => s + Number(p.points), 0);
-    penal = motor.round2(Math.max(puntosMes, 0) * pct / 100);
+    const movil = (motor.puntosVivos(DB).find((x) => x.player_id === reg.player_id) || {}).rolling_points || 0;
+    penal = motor.round2(Math.max(movil, 0) * pct / 100);
     if (penal > 0) {
       DB.points_ledger.push({
         id: motor.nuevoId(DB, 'pl'), player_id: reg.player_id, escalera_id: esc.id,
         round_match_id: null, format: esc.format, points: -penal, reason: 'late_cancel_penalty',
         court_number: null, multiplier_applied: null, month_key: mes, created_by: yo,
-        notes: `Baja a ${horas} h del evento, sin sustituto y sin nadie en lista de espera.`,
+        notes: horas >= 0
+          ? `Baja a ${horas} h del evento, sin sustituto y sin nadie en lista de espera.`
+          : 'Baja con el evento ya empezado, sin sustituto y sin nadie en lista de espera.',
         created_at: DEMO.ahora().toISOString(),
       });
     }
@@ -592,11 +642,11 @@ function cancelarRegistroMock(regId) {
 
   persistir();
   const mensaje = penal > 0
-    ? `Te diste de baja con menos de ${corte} h y nadie tomó tu lugar: se aplicó una penalización de ${penal} pts.`
+    ? `Te diste de baja con menos de ${corte} h y nadie tomó tu lugar: se aplicó una penalización de ${penal} pts sobre tu puntaje de las últimas 6 noches.`
     : (cubierto && reg.status === 'cancelled_late'
       ? 'Te diste de baja tarde, pero alguien de la lista de espera tomó tu lugar: sin penalización.'
       : (reg.status === 'cancelled_late'
-        ? 'Te diste de baja tarde. No había puntos del mes que descontar, pero quedó registrado.'
+        ? 'Te diste de baja tarde. Todavía no tienes puntos en tu ventana móvil que descontar, pero quedó registrado.'
         : 'Listo, te dimos de baja sin penalización.'));
 
   return { estado: reg.status, penalizado: penal > 0, puntos_penalizacion: penal, perdio_ventaja: perdio, cubierto, mensaje };
@@ -667,7 +717,7 @@ function comenzarEscaleraMock(escId) {
 
 /* ---------- admin_agregar_jugador ---------- */
 
-function adminAgregarJugadorMock(escId, playerId, partnerId) {
+function adminAgregarJugadorMock(escId, playerId, partnerId, forzar) {
   const e = DB.escaleras.find((x) => x.id === escId);
   if (!e) throw new Error('Convocatoria no encontrada.');
   const ws = wsById(e.weekday_schedule_id) || {};
@@ -680,6 +730,23 @@ function adminAgregarJugadorMock(escId, playerId, partnerId) {
   }
   const perfil = DB.profiles.find((p) => p.id === playerId);
   if (perfil && perfil.status === 'suspended') throw new Error('Esa cuenta está suspendida.');
+
+  // Recepción sí puede meter a alguien de otra categoría, pero a propósito.
+  let aviso = '';
+  const catNoche = ws.category;
+  if (catNoche) {
+    const catJug = catEfectivaDe(playerId);
+    const catPar = partnerId ? catEfectivaDe(partnerId) : null;
+    if (!forzar && catJug && catJug !== catNoche) {
+      throw new Error(`CATEGORIA_DISTINTA: esa persona es de Categoría ${catJug} y esta noche es de Categoría ${catNoche}.`);
+    }
+    if (!forzar && catPar && catPar !== catNoche) {
+      throw new Error(`CATEGORIA_DISTINTA: el compañero es de Categoría ${catPar} y esta noche es de Categoría ${catNoche}.`);
+    }
+    if (forzar && catJug && catJug !== catNoche) {
+      aviso = ` (es de Categoría ${catJug}, lo metiste a propósito)`;
+    }
+  }
 
   const cap = ws.capacity != null ? ws.capacity : 12;
   const necesita = e.format === 'parejas' ? 2 : 1;
@@ -709,7 +776,7 @@ function adminAgregarJugadorMock(escId, playerId, partnerId) {
   recalcularEspera(escId);
   persistir();
   return { registration_id: id, resultado: 'confirmed',
-    mensaje: `${(perfil && perfil.full_name) || 'El jugador'} quedó confirmado. Van ${conf + necesita} de ${cap}.` };
+    mensaje: `${(perfil && perfil.full_name) || 'El jugador'} quedó confirmado${aviso}. Van ${conf + necesita} de ${cap}.` };
 }
 
 /* ---------- mi_carrera_liguilla ---------- */
@@ -1144,16 +1211,10 @@ export function createClient() {
       }
       if (name === 'admin_agregar_jugador') {
         return envolver(() => [adminAgregarJugadorMock(
-          params.p_escalera_id, params.p_player_id, params.p_partner_id || null)]);
+          params.p_escalera_id, params.p_player_id, params.p_partner_id || null, !!params.p_forzar)]);
       }
       if (name === 'recomendacion_cupo') {
         return { data: [recomendacionCupoMock(params.p_escalera_id)], error: null };
-      }
-      if (name === 'ajustar_canchas_escalera') {
-        const esc = DB.escaleras.find((e) => e.id === params.p_escalera_id);
-        if (!esc) return { data: null, error: { message: 'Convocatoria no encontrada.' } };
-        esc.courts_active = params.p_courts;
-        return { data: null, error: null };
       }
       if (name === 'cancelar_escalera_admin') {
         const esc = DB.escaleras.find((e) => e.id === params.p_escalera_id);
@@ -1228,7 +1289,23 @@ export function createClient() {
       if (name === 'marcar_no_show') {
         const reg = DB.escalera_registrations.find((r) => r.id === params.p_registration_id);
         if (!reg) return { data: null, error: { message: 'Registro no encontrado.' } };
+        const escNS = DB.escaleras.find((e) => e.id === reg.escalera_id);
+        const pctNS = cfg('no_show_penalty_pct', 50);
+        const movilNS = (motor.puntosVivos(DB).find((x) => x.player_id === reg.player_id) || {}).rolling_points || 0;
+        const penalNS = motor.round2(Math.max(movilNS, 0) * pctNS / 100);
+        if (escNS && penalNS > 0) {
+          DB.points_ledger.push({
+            id: motor.nuevoId(DB, 'pl'), player_id: reg.player_id, escalera_id: escNS.id,
+            round_match_id: null, format: escNS.format, points: -penalNS, reason: 'no_show_penalty',
+            court_number: null, multiplier_applied: null, month_key: escNS.session_date.slice(0, 7),
+            created_by: uidActual(),
+            notes: 'No se presento. Penalizacion sobre el puntaje de las ultimas 6 noches.',
+            created_at: DEMO.ahora().toISOString(),
+          });
+        }
         reg.status = 'no_show';
+        if (escNS) promoverEspera(escNS.id);
+        persistir();
         return { data: { ok: true }, error: null };
       }
       if (name === 'responder_calificacion_liguilla') {

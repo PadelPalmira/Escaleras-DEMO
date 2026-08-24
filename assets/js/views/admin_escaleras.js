@@ -350,7 +350,7 @@ function renderRoster(esc, ws, registros, confirmados, enEspera, cupo, refresh) 
       card.appendChild(el('div', { class: 'btn-row mt-2' }, [
         el('button', { class: 'btn btn-secondary btn-sm', onclick: () => abrirSustituto(r, refresh, ws.format) }, 'Sustituto'),
         el('button', { class: 'btn btn-secondary btn-sm', onclick: async () => {
-          const ok = await confirmSheet({ title: '¿No se presentó?', body: 'Se le aplica la penalización de no-show del mes en curso.', confirmLabel: 'Sí, no vino', danger: true });
+          const ok = await confirmSheet({ title: '¿No se presentó?', body: 'Se le descuenta la penalización de no-show sobre su puntaje de las últimas 6 noches.', confirmLabel: 'Sí, no vino', danger: true });
           if (!ok) return;
           try { await marcarNoShow(r.id); toast('Marcado como no-show.', 'success'); refresh(); }
           catch (err) { toast(humanizeError(err), 'error'); }
@@ -368,7 +368,12 @@ function renderRoster(esc, ws, registros, confirmados, enEspera, cupo, refresh) 
   if (!confirmados.length && !enEspera.length) {
     card.appendChild(el('p', { class: 'text-muted' }, 'Todavía no se anota nadie.'));
   }
-  confirmados.forEach((r, i) => pintarFila(r, i, r.partner_id ? 'Juega en pareja' : ''));
+  confirmados.forEach((r, i) => pintarFila(r, i,
+    r.partner_id
+      ? (r.partner_status === 'pending'
+          ? '⚠️ Juega en pareja — todavia no acepta la invitacion'
+          : 'Juega en pareja')
+      : ''));
   if (enEspera.length) {
     card.appendChild(el('div', { class: 'text-tiny mt-3', style: 'text-transform:uppercase;letter-spacing:0.05em;color:var(--text-tertiary);' },
       `Lista de espera (${enEspera.length})`));
@@ -398,13 +403,28 @@ function abrirAgregarJugador(esc, ws, refresh) {
     resumen.textContent = `Pareja: ${seleccion.a ? seleccion.a.full_name : '—'} + ${seleccion.b ? seleccion.b.full_name : '—'}`;
   };
 
-  const guardar = async (a, b) => {
+  const guardar = async (a, b, forzar = false) => {
     try {
-      const r = await adminAgregarJugador(esc.id, a.id, b ? b.id : null);
+      const r = await adminAgregarJugador(esc.id, a.id, b ? b.id : null, forzar);
       toast(r && r.mensaje ? r.mensaje : 'Listo, ya está en la lista.', 'success');
       handle.close();
       refresh();
-    } catch (err) { toast(humanizeError(err), 'error'); }
+    } catch (err) {
+      // La base avisa cuando el jugador es de otra categoría en vez de
+      // dejarlo pasar en silencio: recepción decide, pero a propósito.
+      const msg = String((err && err.message) || '');
+      if (msg.includes('CATEGORIA_DISTINTA')) {
+        const detalle = msg.split('CATEGORIA_DISTINTA:').pop().trim();
+        const ok = await confirmSheet({
+          title: 'Es de otra categoría',
+          body: `${detalle} Si lo metes de todas formas va a jugar por puntos contra jugadores de otro nivel. ¿Seguro?`,
+          confirmLabel: 'Sí, meterlo igual', danger: true,
+        });
+        if (ok) await guardar(a, b, true);
+        return;
+      }
+      toast(humanizeError(err), 'error');
+    }
   };
 
   const elegir = (p) => {
@@ -447,7 +467,7 @@ function renderPartidoRow(m, onChange) {
   row.appendChild(el('div', { class: 'row-between' }, [
     el('div', { class: 'text-tiny' }, `Cancha ${m.court_number}`),
     m.status === 'completed'
-      ? el('span', { class: 'badge badge-success' }, `${m.score_team1}-${m.score_team2} sets`)
+      ? el('span', { class: 'badge badge-success' }, `${m.games_team1}-${m.games_team2}`)
       : el('span', { class: 'badge badge-neutral' }, 'Pendiente'),
   ]));
   row.appendChild(el('div', { class: 'mt-1', style: 'font-size:14px;font-weight:600;' }, nombreEquipo(m, 'team1')));
@@ -467,46 +487,55 @@ function renderPartidoRow(m, onChange) {
   return row;
 }
 
-/** Sheet reutilizable para capturar/corregir un marcador de 2-3 sets (team1/team2). */
+/* ============================================================
+   Captura del marcador.
+   La ronda dura 15 minutos y se detiene ahi: se anota UN marcador
+   de games, no sets. Los partidos a 2-3 sets son solo de Liguilla.
+   ============================================================ */
 function abrirCapturaResultado(m, onChange) {
-  const setsPrevios = (m.sets_json && m.sets_json.sets) || [];
+  const previo = ((m.sets_json && m.sets_json.sets) || [])[0] || null;
   const content = el('div');
-  content.appendChild(el('div', { class: 'sheet-title' }, m.status === 'completed' ? 'Corregir resultado' : 'Capturar resultado'));
-  content.appendChild(el('p', { class: 'text-tiny mb-3' }, `${nombreEquipo(m, 'team1')}  vs  ${nombreEquipo(m, 'team2')}`));
+  content.appendChild(el('div', { class: 'sheet-title' },
+    m.status === 'completed' ? 'Corregir el marcador' : '¿Cómo quedaron a los 15 minutos?'));
+  content.appendChild(el('p', { class: 'text-tiny mb-3' },
+    'Anota los games que hizo cada equipo. Si al minuto 15 iban iguales, el punto de oro define ese game: nunca se guarda un empate.'));
 
-  function setRow(label, prev) {
-    const g1 = el('input', { class: 'input', type: 'number', min: '0', placeholder: '0', value: prev ? String(prev.team1) : '' });
-    const g2 = el('input', { class: 'input', type: 'number', min: '0', placeholder: '0', value: prev ? String(prev.team2) : '' });
-    const node = el('div', { class: 'field' }, [
-      el('label', {}, label),
-      el('div', { class: 'row gap-2' }, [g1, el('div', { class: 'text-tiny' }, 'vs'), g2]),
+  function ladoEquipo(nombre, valor) {
+    const input = el('input', {
+      class: 'input', type: 'number', min: '0', inputmode: 'numeric',
+      placeholder: '0', value: valor == null ? '' : String(valor),
+      style: 'font-size:26px;font-weight:800;text-align:center;height:58px;',
+    });
+    const node = el('div', { style: 'flex:1;min-width:0;' }, [
+      el('div', { class: 'text-tiny mb-1', style: 'font-weight:700;overflow-wrap:anywhere;' }, nombre),
+      input,
     ]);
-    return { node, g1, g2 };
+    return { node, input };
   }
 
-  const set1 = setRow('Set 1 (games)', setsPrevios[0]);
-  const set2 = setRow('Set 2 (games)', setsPrevios[1]);
-  const set3 = setRow('Set 3 — súper muerte (opcional, solo si hubo empate a sets)', setsPrevios[2]);
-
-  content.appendChild(set1.node);
-  content.appendChild(set2.node);
-  content.appendChild(set3.node);
+  const eq1 = ladoEquipo(nombreEquipo(m, 'team1'), previo ? previo.team1 : null);
+  const eq2 = ladoEquipo(nombreEquipo(m, 'team2'), previo ? previo.team2 : null);
+  content.appendChild(el('div', { class: 'row gap-2', style: 'align-items:flex-end;' }, [
+    eq1.node,
+    el('div', { class: 'text-tiny', style: 'padding-bottom:18px;font-weight:700;' }, 'vs'),
+    eq2.node,
+  ]));
 
   if (m.status === 'completed') {
     const nota = el('input', { class: 'input', type: 'text', placeholder: 'Motivo de la corrección (opcional)' });
-    content.appendChild(el('div', { class: 'field' }, [el('label', {}, 'Nota de corrección'), nota]));
+    content.appendChild(el('div', { class: 'field mt-3' }, [el('label', {}, 'Nota de corrección'), nota]));
     content._nota = nota;
   }
 
   const errBox = el('p', { class: 'text-tiny mt-2', style: 'color:var(--danger);display:none;' });
   content.appendChild(errBox);
 
-  const saveBtn = el('button', { class: 'btn btn-primary mt-3' }, 'Guardar resultado');
+  const saveBtn = el('button', { class: 'btn btn-primary mt-3' }, 'Guardar marcador');
   saveBtn.addEventListener('click', async () => {
     errBox.style.display = 'none';
     let sets;
     try {
-      sets = construirSets(set1, set2, set3);
+      sets = construirSets(eq1, eq2);
     } catch (e) {
       errBox.textContent = e.message; errBox.style.display = 'block'; return;
     }
@@ -514,16 +543,16 @@ function abrirCapturaResultado(m, onChange) {
     try {
       if (m.status === 'completed') {
         await corregirResultadoPartido(m.id, sets, content._nota ? content._nota.value.trim() || null : null);
-        toast('Resultado corregido.', 'success');
+        toast('Marcador corregido.', 'success');
       } else {
         await registrarResultadoPartido(m.id, sets);
-        toast('Resultado guardado.', 'success');
+        toast('Marcador guardado.', 'success');
       }
       handle.close();
       onChange();
     } catch (err) {
       errBox.textContent = humanizeError(err); errBox.style.display = 'block';
-      saveBtn.disabled = false; saveBtn.textContent = 'Guardar resultado';
+      saveBtn.disabled = false; saveBtn.textContent = 'Guardar marcador';
     }
   });
   content.appendChild(saveBtn);
@@ -531,27 +560,17 @@ function abrirCapturaResultado(m, onChange) {
   const handle = openSheet(content);
 }
 
-function construirSets(set1, set2, set3) {
-  function leer(s, requerido) {
-    const t1 = s.g1.value.trim(), t2 = s.g2.value.trim();
-    if (!t1 && !t2) return null;
-    const n1 = Number(t1), n2 = Number(t2);
-    if (!Number.isFinite(n1) || !Number.isFinite(n2) || n1 < 0 || n2 < 0) throw new Error('Los marcadores deben ser números válidos (0 o más).');
-    if (n1 === n2) throw new Error('Un set no puede terminar empatado.');
-    return { team1: n1, team2: n2 };
+function construirSets(eq1, eq2) {
+  const t1 = eq1.input.value.trim(), t2 = eq2.input.value.trim();
+  if (!t1 || !t2) throw new Error('Falta el marcador de alguno de los dos equipos.');
+  const n1 = Number(t1), n2 = Number(t2);
+  if (!Number.isInteger(n1) || !Number.isInteger(n2) || n1 < 0 || n2 < 0) {
+    throw new Error('Los games se anotan con números enteros de 0 en adelante.');
   }
-  const s1 = leer(set1, true);
-  const s2 = leer(set2, true);
-  if (!s1 || !s2) throw new Error('Captura al menos el Set 1 y el Set 2.');
-  const sets = [s1, s2];
-  const s3 = leer(set3, false);
-  if (s3) sets.push(s3);
-  else if ((s1.team1 > s1.team2) === (s2.team1 > s2.team2)) {
-    // Mismo equipo ganó ambos sets — no hace falta el 3ro, esto es válido.
-  } else {
-    throw new Error('Hay empate a un set — captura el Set 3 (súper muerte) para definir el partido.');
+  if (n1 === n2) {
+    throw new Error(`No se puede guardar ${n1}-${n2}: la ronda necesita un ganador. Si iban iguales al minuto 15, jueguen el punto de oro y anoten ese game.`);
   }
-  return sets;
+  return [{ team1: n1, team2: n2 }];
 }
 
 function abrirSustituto(registro, onChange, formato) {

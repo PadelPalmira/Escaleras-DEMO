@@ -598,9 +598,9 @@ export async function comenzarEscalera(escaleraId) {
 }
 
 /* Recepcion mete a alguien que llego sin haberse anotado. */
-export async function adminAgregarJugador(escaleraId, playerId, partnerId = null) {
+export async function adminAgregarJugador(escaleraId, playerId, partnerId = null, forzar = false) {
   const { data, error } = await supabase.rpc('admin_agregar_jugador', {
-    p_escalera_id: escaleraId, p_player_id: playerId, p_partner_id: partnerId,
+    p_escalera_id: escaleraId, p_player_id: playerId, p_partner_id: partnerId, p_forzar: forzar,
   });
   if (error) throw error;
   return Array.isArray(data) ? data[0] : data;
@@ -646,13 +646,6 @@ export async function getRecomendacionCupo(escaleraId) {
   const { data, error } = await supabase.rpc('recomendacion_cupo', { p_escalera_id: escaleraId });
   if (error) throw error;
   return Array.isArray(data) ? data[0] : data;
-}
-
-export async function ajustarCanchas(escaleraId, courts, avisar = true) {
-  const { error } = await supabase.rpc('ajustar_canchas_escalera', {
-    p_escalera_id: escaleraId, p_courts: courts, p_avisar: avisar,
-  });
-  if (error) throw error;
 }
 
 export async function cancelarEscaleraAdmin(escaleraId, motivo) {

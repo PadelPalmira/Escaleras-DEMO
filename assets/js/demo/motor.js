@@ -51,9 +51,40 @@ export function mesKey(fechaISO) {
 }
 
 /* ============================================================
-   liguilla_resumen_sets(jsonb) + escalera_resumen_sets(jsonb)
+   escalera_resumen_sets(jsonb)
+   ------------------------------------------------------------
+   La ronda de escalera dura 15 minutos y se detiene ahi: se
+   captura UN marcador de games, nunca sets completos. Los
+   partidos a 2-3 sets con super muerte son solo de Liguilla y
+   viven en resumenSetsLiguilla().
    ============================================================ */
 export function resumenSets(sets) {
+  if (!Array.isArray(sets)) {
+    throw new Error('El marcador de una ronda se captura asi: [{"team1":5,"team2":4}]');
+  }
+  if (sets.length !== 1) {
+    throw new Error(`Cada ronda de escalera dura 15 minutos y se captura con un solo marcador de games (recibidos: ${sets.length}). Los partidos a 2 o 3 sets son unicamente de Liguilla.`);
+  }
+  const el = sets[0];
+  if (el.team1 === undefined || el.team1 === null || el.team2 === undefined || el.team2 === null) {
+    throw new Error('Falta el marcador de alguno de los dos equipos.');
+  }
+  const g1 = Number(el.team1), g2 = Number(el.team2);
+  if (g1 < 0 || g2 < 0) throw new Error('No existen games negativos.');
+  if (g1 === g2) {
+    throw new Error(`La ronda no puede quedar empatada (${g1}-${g2}). Si al minuto 15 iban iguales, se juega el punto de oro y ese game define al ganador.`);
+  }
+  return {
+    sets,
+    totales: {
+      team1: { sets: g1 > g2 ? 1 : 0, games: g1 },
+      team2: { sets: g2 > g1 ? 1 : 0, games: g2 },
+    },
+  };
+}
+
+/* liguilla_resumen_sets(jsonb) — sin cambios: 2 o 3 sets, el 3ro super muerte. */
+export function resumenSetsLiguilla(sets) {
   if (!Array.isArray(sets)) throw new Error('sets_json debe ser un arreglo JSON de sets.');
   if (sets.length < 2 || sets.length > 3) {
     throw new Error(`Un partido debe tener entre 2 y 3 sets (recibidos: ${sets.length}).`);
@@ -67,7 +98,6 @@ export function resumenSets(sets) {
     const s1 = Number(el.team1), s2 = Number(el.team2);
     if (s1 < 0 || s2 < 0) throw new Error(`Marcadores negativos no validos (set ${i}).`);
     if (s1 === s2) throw new Error(`Un set no puede terminar empatado (set ${i}).`);
-    // super_muerte por defecto true en el 3er set, igual que el SQL.
     const sup = el.super_muerte === undefined || el.super_muerte === null ? i === 3 : !!el.super_muerte;
     if (s1 > s2) {
       sets1 += 1;
@@ -391,19 +421,18 @@ export function otorgarPuntosSeat(db, escaleraId, matchId, formato, playerId, pu
     return 1;
   }
 
-  let pAus, pSus, notaA, notaS;
-  if (reg.is_coach_substitute) {
-    pAus = 0; pSus = 0;
-    notaA = 'Sustituto COACH: el jugador ausente no recibe puntos por esta sesion.';
-    notaS = 'Sustituto COACH: el coach no acumula puntos del club.';
-  } else {
-    const pctA = cfgNum(db, 'substitute_split_ausente_pct', 66);
-    const pctS = cfgNum(db, 'substitute_split_sustituto_pct', 34);
-    pAus = round2(puntos * pctA / 100);
-    pSus = round2(puntos * pctS / 100);
-    notaA = `Split de sustituto: ${pctA}% para el jugador ausente.`;
-    notaS = `Split de sustituto: ${pctS}% para el sustituto.`;
-  }
+  // Sustituto COACH: ni el coach ni el ausente ganan puntos, y no se escribe
+  // ninguna fila. Antes se escribian dos filas de 0, y ese cero le ocupaba al
+  // ausente un lugar de sus ultimas 6 noches: le bajaba el promedio por una
+  // noche que ni siquiera jugo.
+  if (reg.is_coach_substitute) return 0;
+
+  const pctA = cfgNum(db, 'substitute_split_ausente_pct', 66);
+  const pctS = cfgNum(db, 'substitute_split_sustituto_pct', 34);
+  const pAus = round2(puntos * pctA / 100);
+  const pSus = round2(puntos * pctS / 100);
+  const notaA = `Split de sustituto: ${pctA}% para el jugador ausente.`;
+  const notaS = `Split de sustituto: ${pctS}% para el sustituto.`;
   push(orig.player_id, pAus, 'substitute_bonus_ausente', playerId, (notas ? notas + ' | ' : '') + notaA);
   push(playerId, pSus, 'substitute_bonus_sustituto', orig.player_id, (notas ? notas + ' | ' : '') + notaS);
   return 2;
@@ -463,35 +492,114 @@ export function cerrarEscalera(db, escaleraId, ctx) {
 }
 
 /* ============================================================
-   puntos_vivos() / ranking_vivo(text) / ranking_establecido(text)
+   estadisticas_vivas() / puntos_vivos() / ranking_vivo(text)
+   ------------------------------------------------------------
+   Una sola fuente de verdad para el puntaje movil:
+     · las noches caducan a las N semanas;
+     · las penalizaciones restan pero NO ocupan un lugar de las
+       ultimas 6 (antes empujaban fuera una noche buena, o sea
+       castigo doble);
+     · se cuentan partidos ganados y diferencia de games para
+       desempatar con criterio deportivo y no por id.
    ============================================================ */
-export function puntosVivos(db) {
-  const n = cfgNum(db, 'rolling_window_size', 6);
+const RAZONES_CASTIGO = ['late_cancel_penalty', 'no_show_penalty'];
 
-  // por_escalera: suma de puntos por jugador y escalera COMPLETADA.
-  const porEscalera = new Map(); // player -> [{escalera_id, session_date, pts}]
+// El reloj del motor: la demo lo inyecta con su maquina del tiempo.
+let _hoyMotor = () => new Date().toISOString().slice(0, 10);
+export function setHoyMotor(fn) {
+  _hoyMotor = typeof fn === 'function' ? fn : (() => new Date().toISOString().slice(0, 10));
+}
+export function hoyMotor() { return _hoyMotor(); }
+
+export function restarDias(fechaISO, dias) {
+  const d = new Date(String(fechaISO) + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() - dias);
+  return d.toISOString().slice(0, 10);
+}
+
+export function estadisticasVivas(db) {
+  const n = cfgNum(db, 'rolling_window_size', 6);
+  const semanas = cfgNum(db, 'semanas_vigencia_puntos', 8);
+  const desde = restarDias(hoyMotor(), semanas * 7);
+
+  const juego = new Map();   // player -> Map(escalera_id -> {escalera_id, session_date, pts})
+  const castigo = new Map(); // player -> puntos negativos
+
   for (const pl of db.points_ledger) {
     const e = db.escaleras.find((x) => x.id === pl.escalera_id);
-    if (!e || e.status !== 'completed' || !['individual', 'parejas'].includes(e.format)) continue;
-    if (!porEscalera.has(pl.player_id)) porEscalera.set(pl.player_id, new Map());
-    const m = porEscalera.get(pl.player_id);
+    if (!e || e.session_date < desde) continue;
+    if (RAZONES_CASTIGO.includes(pl.reason)) {
+      castigo.set(pl.player_id, (castigo.get(pl.player_id) || 0) + Number(pl.points));
+      continue;
+    }
+    if (e.status !== 'completed') continue;
+    if (!['individual', 'parejas'].includes(e.format)) continue;
+    if (e.is_liguilla) continue;
+    if (!juego.has(pl.player_id)) juego.set(pl.player_id, new Map());
+    const m = juego.get(pl.player_id);
     const prev = m.get(e.id) || { escalera_id: e.id, session_date: e.session_date, pts: 0 };
     prev.pts += Number(pl.points);
     m.set(e.id, prev);
   }
 
+  const ids = new Set([...juego.keys(), ...castigo.keys()]);
   const out = [];
-  for (const [playerId, m] of porEscalera) {
-    const filas = [...m.values()].sort((a, b) =>
-      (a.session_date < b.session_date ? 1 : a.session_date > b.session_date ? -1 : ordenId(b.escalera_id, a.escalera_id)));
+  for (const playerId of ids) {
+    const m = juego.get(playerId);
+    const filas = m ? [...m.values()].sort((a, b) =>
+      (a.session_date < b.session_date ? 1 : a.session_date > b.session_date ? -1
+        : ordenId(b.escalera_id, a.escalera_id))) : [];
     const top = filas.slice(0, n);
+    const pts = round2(top.reduce((sum, r) => sum + r.pts, 0) + (castigo.get(playerId) || 0));
+
+    const cuentan = new Set(top.map((r) => r.escalera_id));
+    let ganados = 0, dif = 0;
+    if (cuentan.size) {
+      const rondas = db.rounds.filter((r) => cuentan.has(r.escalera_id)).map((r) => r.id);
+      const setR = new Set(rondas);
+      for (const rm of db.round_matches) {
+        if (!setR.has(rm.round_id) || rm.status !== 'completed') continue;
+        let gf = null, gc = null;
+        if (rm.team1_player1 === playerId || rm.team1_player2 === playerId) {
+          gf = Number(rm.games_team1 || 0); gc = Number(rm.games_team2 || 0);
+        } else if (rm.team2_player1 === playerId || rm.team2_player2 === playerId) {
+          gf = Number(rm.games_team2 || 0); gc = Number(rm.games_team1 || 0);
+        }
+        if (gf === null) continue;
+        if (gf > gc) ganados += 1;
+        dif += gf - gc;
+      }
+    }
+
     out.push({
       player_id: playerId,
-      rolling_points: round2(top.reduce((s, r) => s + r.pts, 0)),
+      rolling_points: pts,
       escaleras_contadas: top.length,
+      promedio: top.length ? round2(pts / top.length) : 0,
+      partidos_ganados: ganados,
+      dif_games: dif,
     });
   }
   return out;
+}
+
+export function puntosVivos(db) {
+  return estadisticasVivas(db).map((s) => ({
+    player_id: s.player_id,
+    rolling_points: s.rolling_points,
+    escaleras_contadas: s.escaleras_contadas,
+  }));
+}
+
+// Orden del ranking: primero los que ya tienen la ventana con el minimo de
+// noches, luego mejor promedio, y los empates se rompen en cancha.
+export function comparaRanking(a, b) {
+  return (a.provisional === b.provisional ? 0 : (a.provisional ? 1 : -1))
+    || (b.promedio - a.promedio)
+    || (b.ganados - a.ganados)
+    || (b.dif - a.dif)
+    || (b.escaleras_contadas - a.escaleras_contadas)
+    || (a.nombre < b.nombre ? -1 : a.nombre > b.nombre ? 1 : 0);
 }
 
 export function categoriaEfectiva(db, playerId) {
@@ -504,19 +612,26 @@ export function categoriaEfectiva(db, playerId) {
 }
 
 export function rankingVivo(db, categoria) {
-  const pv = puntosVivos(db);
+  const ev = estadisticasVivas(db);
+  const minn = cfgNum(db, 'min_noches_para_mover', 3);
   const base = [];
   for (const pr of db.profiles) {
     if (pr.status !== 'active') continue;
     if (categoriaEfectiva(db, pr.id) !== categoria) continue;
-    const p = pv.find((x) => x.player_id === pr.id);
+    const p = ev.find((x) => x.player_id === pr.id);
+    const noches = p ? p.escaleras_contadas : 0;
     base.push({
       player_id: pr.id,
       rolling_points: p ? p.rolling_points : 0,
-      escaleras_contadas: p ? p.escaleras_contadas : 0,
+      escaleras_contadas: noches,
+      promedio: p ? p.promedio : 0,
+      ganados: p ? p.partidos_ganados : 0,
+      dif: p ? p.dif_games : 0,
+      nombre: pr.full_name || '',
+      provisional: noches < minn,
     });
   }
-  base.sort((a, b) => b.rolling_points - a.rolling_points || ordenId(a.player_id, b.player_id));
+  base.sort(comparaRanking);
   base.forEach((r, i) => { r.rnk = i + 1; });
   return base;
 }
@@ -635,8 +750,10 @@ export function rngDesde(semilla) {
 export function recalcularCategorias(db, lunes, ahora) {
   const banda = cfgNum(db, 'zona_limite_band_size', 3);
   const n = cfgNum(db, 'ascenso_descenso_por_semana', 2);
-  const pv = puntosVivos(db);
+  const minn = cfgNum(db, 'min_noches_para_mover', 3);
+  const ev = estadisticasVivas(db);
   const cuando = (ahora ? ahora() : new Date()).toISOString();
+  const nombreDe = (id) => (db.profiles.find((p) => p.id === id) || {}).full_name || '';
 
   // Categoría con la que venía cada quien: el snapshot más reciente ANTES
   // de esta semana.
@@ -651,10 +768,13 @@ export function recalcularCategorias(db, lunes, ahora) {
 
   const nivelDeA = ['2da_varonil', '3ra_varonil', '4ta_varonil', '5ta_varonil'];
 
-  // Primera vez que corre en el club: se parte por la mediana, una sola vez.
+  // Primera vez que corre en el club: se parte por la mediana, una sola vez,
+  // ya ordenando por promedio y dejando a los provisionales al final.
   if (previas.size === 0) {
-    const orden = pv.slice().sort((a, b) =>
-      b.rolling_points - a.rolling_points || ordenId(a.player_id, b.player_id));
+    const orden = ev.map((r) => ({
+      ...r, nombre: nombreDe(r.player_id), provisional: r.escaleras_contadas < minn,
+      ganados: r.partidos_ganados, dif: r.dif_games,
+    })).sort(comparaRanking);
     const total = orden.length;
     const corte = Math.ceil(total / 2);
     orden.forEach((r, i) => {
@@ -670,7 +790,7 @@ export function recalcularCategorias(db, lunes, ahora) {
       });
     });
     db.profiles
-      .filter((p) => p.status === 'active' && p.declared_level && !pv.some((x) => x.player_id === p.id))
+      .filter((p) => p.status === 'active' && p.declared_level && !ev.some((x) => x.player_id === p.id))
       .forEach((p) => ponerSnapshot(db, {
         player_id: p.id, week_start_date: lunes, rolling_points: 0, escaleras_counted: 0,
         rank: null, total_active_players: null,
@@ -684,39 +804,51 @@ export function recalcularCategorias(db, lunes, ahora) {
   const filas = db.profiles
     .filter((p) => p.status === 'active' && (previas.has(p.id) || p.declared_level))
     .map((p) => {
-      const v = pv.find((x) => x.player_id === p.id);
+      const v = ev.find((x) => x.player_id === p.id);
+      const noches = v ? v.escaleras_contadas : 0;
       return {
         player_id: p.id,
         cat: previas.get(p.id) || (nivelDeA.includes(p.declared_level) ? 'A' : 'B'),
         pts: v ? v.rolling_points : 0,
-        n: v ? v.escaleras_contadas : 0,
+        n: noches,
+        escaleras_contadas: noches,
+        promedio: v ? v.promedio : 0,
+        ganados: v ? v.partidos_ganados : 0,
+        dif: v ? v.dif_games : 0,
+        nombre: p.full_name || '',
+        provisional: noches < minn,
         nuevo: !previas.has(p.id),
       };
     });
 
-  const sizeA = filas.filter((f) => f.cat === 'A').length;
-  const sizeB = filas.filter((f) => f.cat === 'B').length;
-  const elegA = filas.filter((f) => f.cat === 'A' && f.n > 0);
-  const elegB = filas.filter((f) => f.cat === 'B' && f.n > 0);
+  // Los tamaños se comparan solo entre ACTIVOS: alguien que lleva meses sin
+  // aparecer no debe desbalancear la cuenta de quién sube o baja.
+  const sizeA = filas.filter((f) => f.cat === 'A' && f.n > 0).length;
+  const sizeB = filas.filter((f) => f.cat === 'B' && f.n > 0).length;
+  const elegA = filas.filter((f) => f.cat === 'A' && f.n >= minn);
+  const elegB = filas.filter((f) => f.cat === 'B' && f.n >= minn);
 
-  // Si una categoría se hizo más grande, ese domingo se mueve uno extra
-  // hacia la más chica para volver a emparejarlas.
   let bajan = n, suben = n;
   if (sizeA - sizeB >= 2) bajan = n + 1;
   if (sizeB - sizeA >= 2) suben = n + 1;
   bajan = Math.max(Math.min(bajan, elegA.length - 1), 0);
   suben = Math.max(Math.min(suben, elegB.length - 1), 0);
 
-  const queBajan = elegA.slice()
-    .sort((a, b) => a.pts - b.pts || ordenId(a.player_id, b.player_id)).slice(0, bajan);
-  const queSuben = elegB.slice()
-    .sort((a, b) => b.pts - a.pts || ordenId(a.player_id, b.player_id)).slice(0, suben);
+  // Baja el que peor PROMEDIA, no el que menos suma. Empates: menos partidos
+  // ganados, peor diferencia de games, menos noches, y al final alfabético.
+  const queBajan = elegA.slice().sort((a, b) =>
+    (a.promedio - b.promedio) || (a.ganados - b.ganados) || (a.dif - b.dif)
+    || (a.n - b.n) || (a.nombre < b.nombre ? -1 : a.nombre > b.nombre ? 1 : 0)
+  ).slice(0, bajan);
+  const queSuben = elegB.slice().sort((a, b) =>
+    (b.promedio - a.promedio) || (b.ganados - a.ganados) || (b.dif - a.dif)
+    || (b.n - a.n) || (a.nombre < b.nombre ? -1 : a.nombre > b.nombre ? 1 : 0)
+  ).slice(0, suben);
   queBajan.forEach((f) => { f.cat = 'B'; });
   queSuben.forEach((f) => { f.cat = 'A'; });
 
   ['A', 'B'].forEach((cat) => {
-    const dela = filas.filter((f) => f.cat === cat)
-      .sort((a, b) => b.pts - a.pts || ordenId(a.player_id, b.player_id));
+    const dela = filas.filter((f) => f.cat === cat).slice().sort(comparaRanking);
     const enCat = dela.length;
     dela.forEach((f, i) => {
       const rnk = i + 1;
@@ -724,8 +856,8 @@ export function recalcularCategorias(db, lunes, ahora) {
         player_id: f.player_id, week_start_date: lunes,
         rolling_points: f.pts, escaleras_counted: f.n,
         rank: rnk, total_active_players: enCat, category: cat,
-        zona_limite_side: cat === 'A' && f.n > 0 && rnk > enCat - banda ? 'bottom_a'
-          : (cat === 'B' && f.n > 0 && rnk <= banda ? 'top_b' : null),
+        zona_limite_side: cat === 'A' && f.n >= minn && rnk > enCat - banda ? 'bottom_a'
+          : (cat === 'B' && f.n >= minn && rnk <= banda ? 'top_b' : null),
         source: f.nuevo ? 'bootstrap_declared' : 'ascenso_descenso',
         computed_at: cuando,
       });

@@ -31,12 +31,12 @@ export const LECCIONES = [
       },
       {
         texto: 'Abre "Cómo se reparten los lugares" y léelo.',
-        porque: 'Es la explicación de la ventana del domingo. Si un socio pregunta, la respuesta está ahí.',
+        porque: 'Es la explicación de la ventana del domingo y del reparto 8 / 4 de los lugares. Si un socio pregunta, la respuesta está ahí.',
         listo: () => document.body.innerText.includes('ventana') || abierto('Cómo se reparten'),
       },
       {
         texto: 'Ve a la pestaña Ranking y busca tu nombre.',
-        porque: 'El puntaje son las últimas 6 noches, no todo el año. Por eso se mueve tanto.',
+        porque: 'El número grande es el PROMEDIO de puntos por noche de sus últimas 6 escaleras, no el total del año: por eso jugar más veces no sube de lugar.',
         ir: '/ranking',
         listo: () => ruta() === '/ranking',
       },
@@ -470,7 +470,7 @@ async function llenarRonda(ev) {
       escribir(campos[k * 2 + 1], s.team2);
     });
     const guardar = [...hoja.querySelectorAll('button')]
-      .find((b) => b.textContent.trim() === 'Guardar resultado');
+      .find((b) => b.textContent.trim() === 'Guardar marcador');
     if (!guardar) break;
     guardar.click();
     await esperar(420);
@@ -488,13 +488,12 @@ function escribir(input, valor) {
 function esperar(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 /* Un marcador cualquiera: 2-0 o 2-1 con súper muerte. */
+// Un parcial de 15 minutos, que es lo que se captura en una escalera.
 function setsAlAzar() {
-  const r = Math.random();
   const gana1 = Math.random() < 0.5;
-  const o = (a, b) => (gana1 ? { team1: a, team2: b } : { team1: b, team2: a });
-  if (r < 0.3) return [o(6, 4), { team1: gana1 ? 4 : 6, team2: gana1 ? 6 : 4 }, o(10, 7)];
-  if (r < 0.65) return [o(6, 3), o(6, 4)];
-  return [o(6, 2), o(6, 4)];
+  const alto = 4 + Math.floor(Math.random() * 3);            // 4, 5 o 6
+  const bajo = Math.max(0, alto - 1 - Math.floor(Math.random() * 4));
+  return [gana1 ? { team1: alto, team2: bajo } : { team1: bajo, team2: alto }];
 }
 
 

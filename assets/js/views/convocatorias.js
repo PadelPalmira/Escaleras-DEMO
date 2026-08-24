@@ -91,16 +91,16 @@ function renderComoFunciona() {
   ]);
   const body = el('div', { class: 'mt-3', style: 'display:none;' }, [
     el('p', { class: 'text-tiny' }, [
+      el('strong', {}, 'Cada noche parte sus lugares en dos. '),
+      'Una parte se aparta para los mejores del ranking de tu categoría y la otra se guarda para todos los demás. Así siempre hay puerta de entrada, aunque no vayas arriba.',
+    ]),
+    el('p', { class: 'text-tiny mt-2' }, [
       el('strong', {}, 'Domingo 10:00 am – 6:00 pm: '),
-      'los 12 mejores del ranking de tu categoría pueden apartar su lugar en todos los eventos de la semana. Es su ventaja por estar arriba.',
+      'los del top apartan solo sus lugares reservados. Los otros son por orden de llegada para el resto de la categoría, desde las 10:00 am.',
     ]),
     el('p', { class: 'text-tiny mt-2' }, [
       el('strong', {}, 'Domingo 6:00 pm en adelante: '),
-      'se acaba la preferencia. Los lugares que sobren se reparten por orden de llegada, y quien ya estaba en lista de espera entra automático en ese orden.',
-    ]),
-    el('p', { class: 'text-tiny mt-2' }, [
-      el('strong', {}, 'Si no estás en el top 12: '),
-      'durante el domingo puedes anotarte a la lista de espera. No es automático, lo tienes que pedir tú.',
+      'se acaba la separación. Lo que sobre es para todos por orden de llegada, y quien ya estaba en lista de espera entra automático en ese orden.',
     ]),
     el('p', { class: 'text-tiny mt-2' }, [
       el('strong', {}, 'Bajas: '),
@@ -172,15 +172,20 @@ function renderCupo(f) {
 
 function renderBannerVentana(f, avisoArriba) {
   if (f.ventana_abierta) {
+    const cap = f.capacidad || 12;
+    const reservados = f.lugares_reservados != null ? f.lugares_reservados : cap;
+    const abiertos = Math.max(cap - reservados, 0);
+    const usadosRanking = f.ocupados_privilegio || 0;
+    const usadosAbiertos = Math.max((f.ocupados || 0) - usadosRanking, 0);
     if (f.tengo_ventaja) {
       return el('div', { class: 'aviso aviso-ok mt-3' }, [
         el('strong', {}, 'Tienes ventaja de ranking. '),
-        `Estás en el top ${f.top_n} de tu categoría, así que puedes apartar tu lugar hasta las 6:00 pm del domingo (${formatFechaHora(f.ventana_cierra)}).`,
+        `Vas en el top ${f.top_n} de tu categoría, así que puedes apartar uno de los ${reservados} lugares que se guardan para el ranking hasta las 6:00 pm del domingo (${formatFechaHora(f.ventana_cierra)}). Van ${usadosRanking} de ${reservados}.`,
       ]);
     }
     return el('div', { class: 'aviso aviso-info mt-3' }, [
-      el('strong', {}, 'Todavía es la ventana del top ' + f.top_n + '. '),
-      `Hasta las 6:00 pm del domingo (${formatFechaHora(f.ventana_cierra)}) los lugares están apartados para los mejores del ranking. Puedes anotarte a la lista de espera y entras automático a esa hora si sobran lugares.`,
+      el('strong', {}, `Quedan ${Math.max(abiertos - usadosAbiertos, 0)} de ${abiertos} lugares abiertos. `),
+      `Los otros ${reservados} están apartados para el top ${f.top_n} hasta las 6:00 pm del domingo (${formatFechaHora(f.ventana_cierra)}). Los abiertos son por orden de llegada desde ahorita: si se acaban, te anotas a la lista de espera y entras automático a esa hora si el top no ocupó todos sus lugares.`,
     ]);
   }
   if (f.ventana_cerrada) {

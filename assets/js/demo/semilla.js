@@ -68,6 +68,9 @@ const AJUSTES = [
   ['multiplicador_cancha_3', '0.9', 'Multiplicador de puntos cancha 3 (se ignora si esa noche solo hay 2 canchas activas)'],
   ['bono_posicion_final_por_cancha', { 1: 10, 2: 5, 3: 0 }, 'Bono que se entrega UNA SOLA VEZ al cerrar la escalera, segun la cancha en la que cada jugador termino la noche.'],
   ['rolling_window_size', '6', 'Numero de escaleras jugadas mas recientes que definen el puntaje movil'],
+  ['semanas_vigencia_puntos', '8', 'Cuantas semanas cuenta una noche jugada para el ranking. Pasadas esas semanas deja de sumar.'],
+  ['min_noches_para_mover', '3', 'Noches jugadas que hacen falta para que tu puntaje deje de ser provisional: antes de eso no subes ni bajas de categoria y apareces al final del ranking.'],
+  ['lugares_reservados_ranking', '8', 'Cuantos de los lugares de cada noche puede apartar el top del ranking durante la ventana del domingo. Los demas quedan abiertos para toda la categoria por orden de llegada desde que abre la convocatoria.'],
   ['max_rondas_escalera', '7', 'Numero de rondas por escalera'],
   ['minutos_por_ronda', '15', 'Duracion de cada ronda en minutos'],
   ['privilege_top_n', '12', 'Cuantos jugadores del ranking de cada categoria pueden apartar lugar durante la ventana del domingo.'],
@@ -77,14 +80,13 @@ const AJUSTES = [
   ['liguilla_top_n', '12', 'Cuantos jugadores de cada categoria califican a la Liguilla / Torneo de Ascenso al cierre del mes.'],
   ['liguilla_cutoff_hours', '24', 'Horas antes de Liguilla/Ascenso en que se cierra confirmacion'],
   ['late_cancel_cutoff_hours', '12', 'Horas antes de la sesion: cancelar despues de este corte sin sustituto = penalizacion tardia'],
-  ['late_cancel_penalty_pct', '15', 'Porcentaje de puntos del mes en curso que se pierde por cancelacion tardia sin sustituto'],
-  ['no_show_penalty_pct', '50', 'Porcentaje de puntos del mes en curso que se pierde por no presentarse sin avisar'],
+  ['late_cancel_penalty_pct', '15', 'Porcentaje del puntaje movil (las ultimas 6 noches) que se pierde por cancelacion tardia sin sustituto.'],
+  ['no_show_penalty_pct', '50', 'Porcentaje del puntaje movil (las ultimas 6 noches) que se pierde por no presentarse sin avisar.'],
   ['cupo_check_hours_before', '6', 'Horas antes del evento en que la app le avisa al admin que el cupo no se ha completado. Si no se llena, la noche se cancela: la escalera solo arranca con el cupo lleno.'],
   ['substitute_split_ausente_pct', '66', 'Porcentaje de puntos ganados que recibe el jugador ausente cuando consigue sustituto'],
   ['substitute_split_sustituto_pct', '34', 'Porcentaje de puntos ganados que recibe el sustituto'],
   ['monetary_fine_amount_mxn', '250', 'Monto sugerido de multa manual por cancelacion tardia/no-show'],
   ['retas_price_mxn', '150', 'Costo informativo por persona de las Retas Abiertas del viernes.'],
-  ['inactive_weeks_threshold', '4', 'Semanas sin jugar tras las cuales un jugador entra a Categoria Limite por inactividad'],
   ['zona_limite_band_size', '3', 'Cuantos jugadores de cada orilla se marcan en zona de descenso (en A) o de ascenso (en B). Es solo el aviso: no cambia cuantos se mueven.'],
   ['ascenso_descenso_por_semana', '2', 'Cuantos jugadores bajan de A y cuantos suben de B cada domingo. Es un tope duro: nadie mas cambia de categoria esa semana. Si las dos categorias quedan con 2 o mas de diferencia en tamano, se mueve uno extra hacia la mas chica para emparejarlas.'],
   ['timezone', 'America/Mexico_City', 'Zona horaria oficial del club para TODOS los cortes de tiempo.'],
@@ -183,31 +185,21 @@ function jugarNoche(db, ws, fecha, jugadores, fuerza, rnd) {
   return escId;
 }
 
-/* Un marcador que se parece a un partido de verdad: el equipo más fuerte gana
-   más seguido, pero no siempre, y a veces se va a súper muerte. */
+/* Un marcador que se parece a una ronda de verdad: 15 minutos, se para donde
+   se paró. El equipo más fuerte gana más seguido, pero no siempre, y muchas
+   rondas se deciden por un game. */
 function marcadorVerosimil(m, fuerza, rnd) {
   const f = (id) => (fuerza.has(id) ? fuerza.get(id) : 0.5);
   const eq1 = (f(m.team1_player1) + f(m.team1_player2)) / 2;
   const eq2 = (f(m.team2_player1) + f(m.team2_player2)) / 2;
   const prob = Math.min(0.9, Math.max(0.1, 0.5 + (eq1 - eq2) * 0.9));
   const gana1 = rnd() < prob;
-  const parejo = Math.abs(eq1 - eq2) < 0.12 ? rnd() < 0.5 : rnd() < 0.22;
+  const parejo = Math.abs(eq1 - eq2) < 0.12 ? rnd() < 0.6 : rnd() < 0.25;
 
-  const orientar = (alto, bajo, ganaEste) =>
-    (ganaEste ? { team1: alto, team2: bajo } : { team1: bajo, team2: alto });
-
-  if (parejo) {
-    // 2-1: gana el primer set, pierde el segundo, súper muerte en el tercero.
-    return [
-      orientar(6, 3 + Math.floor(rnd() * 2), gana1),
-      orientar(6, 4 + Math.floor(rnd() * 2), !gana1),
-      orientar(10, 6 + Math.floor(rnd() * 3), gana1),
-    ];
-  }
-  return [
-    orientar(6, 1 + Math.floor(rnd() * 4), gana1),
-    orientar(6, 1 + Math.floor(rnd() * 4), gana1),
-  ];
+  // En 15 minutos se juegan del orden de 5 a 9 games entre los dos equipos.
+  const alto = parejo ? 4 + Math.floor(rnd() * 2) : 5 + Math.floor(rnd() * 2);
+  const bajo = parejo ? alto - 1 : Math.max(0, alto - 2 - Math.floor(rnd() * 3));
+  return [gana1 ? { team1: alto, team2: bajo } : { team1: bajo, team2: alto }];
 }
 
 /* Quién juega esa noche: 12 de los que quedaron en esa categoría esa semana,

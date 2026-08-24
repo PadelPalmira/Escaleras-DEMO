@@ -52,6 +52,20 @@ async function main() {
     probarGuardas(motor, golden.guardas, linea);
   }
 
+  if (golden.guardas && golden.guardas.marcador) {
+    console.log('\n--- el marcador de una ronda ---');
+    const g = golden.guardas.marcador;
+    const prueba = (sets) => { try { motor.resumenSets(sets); return true; } catch (e) { return false; } };
+    linea(prueba([{ team1: 5, team2: 4 }]) === g.un_parcial, 'un solo parcial de 15 min: se acepta');
+    linea(prueba([{ team1: 6, team2: 4 }, { team1: 6, team2: 3 }]) === g.dos_o_tres_sets,
+      'dos sets completos: se rechazan (eso es Liguilla)');
+    linea(prueba([{ team1: 4, team2: 4 }]) === g.empate, 'marcador empatado: se rechaza');
+    let ligOk = true;
+    try { motor.resumenSetsLiguilla([{ team1: 6, team2: 4 }, { team1: 4, team2: 6 }, { team1: 10, team2: 8 }]); }
+    catch (e) { ligOk = false; }
+    linea(ligOk, 'la Liguilla sigue aceptando 2-3 sets con super muerte');
+  }
+
   console.log(fallos === 0
     ? '\nRESULTADO: la demo se comporta EXACTAMENTE igual que la base real.'
     : `\nRESULTADO: ${fallos} diferencia(s) — la demo NO refleja la app real.`);
@@ -251,12 +265,10 @@ function setsDe(ronda, cancha, eq1, eq2) {
   const objetivo = todos[(ronda * 7 + cancha * 3) % 4];
   const gana1 = eq1.includes(objetivo);
   const k = (ronda * 10 + cancha) % 3;
-  let g, p;
-  if (k === 0) { g = [[6, 4], [3, 6], [10, 8]]; }
-  else if (k === 1) { g = [[6, 3], [6, 4]]; }
-  else { g = [[6, 4], [6, 4]]; }
-  p = g.map(([w, l]) => (gana1 ? { team1: w, team2: l } : { team1: l, team2: w }));
-  return p;
+  // Un solo parcial de 15 minutos, como se juega la escalera de verdad.
+  const marcas = [[5, 4], [6, 2], [5, 3]];
+  const [w, l] = marcas[k];
+  return [gana1 ? { team1: w, team2: l } : { team1: l, team2: w }];
 }
 
 function registro(motor, db, escaleraId, playerId, partnerId, i) {
@@ -416,7 +428,7 @@ function probarGuardas(motor, guardas, linea) {
   for (let i = 0; i < 12; i++) {
     const rd = db.rounds.filter((r) => r.escalera_id === 'e1').sort((a, b) => b.round_number - a.round_number)[0];
     db.round_matches.filter((m) => m.round_id === rd.id).forEach((m) =>
-      motor.registrarResultadoPartido(db, m.id, [{ team1: 6, team2: 3 }, { team1: 6, team2: 4 }], ctx));
+      motor.registrarResultadoPartido(db, m.id, [{ team1: 5, team2: 3 }], ctx));
     try { motor.generarSiguienteRonda(db, 'e1', ctx); llego += 1; }
     catch (e) { topo = /rondas/.test(e.message); break; }
   }

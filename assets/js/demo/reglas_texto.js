@@ -51,7 +51,13 @@ Subir y bajar de cancha según ganes o pierdas es el corazón del formato y siem
 
 Un Admin del club es quien arranca la noche y captura los resultados según se van jugando los partidos. La noche empieza cuando recepción le da **"Comenzar escalera"**, ya con todos en cancha: hasta ese momento la lista sigue abierta.
 
-Se juegan hasta 7 rondas. Al llegar a la 7 la app ya no deja generar más.` },
+Se juegan hasta 7 rondas. Al llegar a la 7 la app ya no deja generar más.
+
+## El marcador de cada ronda
+Cada ronda dura **15 minutos exactos**. Al llegar a los 15 se termina el game que se esté jugando y ahí se para: el marcador que quedó es el resultado de la ronda. No se juegan sets completos — eso es solo en la Liguilla.
+
+Dentro de cada game se juega **punto de oro en 40-40** (sin ventajas). Y si al minuto 15 el marcador va igualado (por ejemplo 4-4), se juega **un punto de oro** para definir ese último game: siempre hay un ganador. La app no acepta un marcador empatado.
+` },
 
 { section_key: 'puntos', sort_order: 2, title: 'Cómo funcionan tus puntos', body_markdown:
 `Tus puntos se ganan jugando — así se calculan:
@@ -75,7 +81,16 @@ Al terminar la escalera, según en qué posición terminaste dentro de tu cancha
 - 3er lugar: **+0 puntos**
 
 ## Tu puntaje "móvil" (el que ves en Ranking)
-No es un acumulado de toda tu vida en el club — es la suma de tus **últimas 6 escaleras cerradas**. Cada domingo a las 9:00am (hora CDMX), justo antes de que abran las convocatorias de la semana, el sistema recalcula todo: las escaleras más viejas van saliendo de la ventana y las más recientes van entrando. Esto significa que tu forma reciente siempre pesa más que resultados de hace meses.` },
+No es un acumulado de toda tu vida en el club. La app toma tus **últimas 6 escaleras cerradas** y saca tu **promedio de puntos por noche**: ese promedio es el que te ordena en el Ranking.
+
+Es el promedio y no la suma a propósito: si fuera la suma, iría arriba el que más veces juega en vez del que mejor juega, y el que se va de viaje dos semanas caería aunque llegara ganando.
+
+- Cada **domingo a las 9:00 am** (hora CDMX), justo antes de que abran las convocatorias, el sistema recalcula todo.
+- Una noche jugada cuenta durante **8 semanas**. Después sale de tu ventana: si dejas de venir, tu puntaje se apaga solo y le deja el lugar a quien sí está jugando.
+- Mientras no llegues a **3 noches** en tu ventana, tu promedio sale marcado como **provisional**: se ve en el Ranking, pero todavía no te sube ni te baja de categoría.
+
+## Y las penalizaciones
+Si te cae una penalización (baja tardía o no-show) se resta de tu puntaje móvil, pero **la noche que no jugaste no te ocupa un lugar de tus 6**: te cuesta exactamente lo que la app te dijo, ni un punto más.` },
 
 { section_key: 'categorias', sort_order: 3, title: 'Tu categoría', body_markdown:
 `El club tiene dos categorías: **A** (la más alta) y **B**. Tu categoría es una sola — combina tu desempeño en Individual y en Parejas, nunca se llevan por separado.
@@ -83,14 +98,17 @@ No es un acumulado de toda tu vida en el club — es la suma de tus **últimas 6
 ## Se sube y se baja, como en el futbol
 Cada categoría conserva a su gente. Cada **domingo a las 9:00am** (hora CDMX) pasa una sola cosa:
 
-- **Bajan a B los 2 últimos de la tabla de A.**
-- **Suben a A los 2 primeros de la tabla de B.**
+- **Bajan a B los 2 con peor promedio de la tabla de A.**
+- **Suben a A los 2 con mejor promedio de la tabla de B.**
 - **Nadie más se mueve.**
 
 Nada de recalcular todo cada semana: si vas a media tabla, tu categoría no cambia aunque tengas una mala noche. Solo se mueven las orillas.
 
 ## Quién entra al intercambio
-Solo quien haya jugado al menos una noche en su ventana móvil (las últimas 6 escaleras). Si no jugaste, ni subes ni bajas: te quedas donde estabas.
+Solo quien lleve al menos **3 noches** en su ventana móvil (tus últimas 6 escaleras de las últimas 8 semanas). Con menos, tu promedio todavía es **provisional** y la app no te mueve: ni te baja por una sola mala noche, ni te sube porque jugaste una vez y te fue bien.
+
+## Si dos empatan en promedio
+Se desempata con criterios de cancha, en este orden: **más partidos ganados**, luego **mejor diferencia de games**, luego **más noches jugadas** y, hasta el final, por orden alfabético. Nunca al azar.
 
 ## Zona de descenso y zona de ascenso
 En la pestaña Ranking se marcan los **3 últimos de A** ("zona de descenso") y los **3 primeros de B** ("zona de ascenso"). Es solo un aviso para que sepas dónde estás parado; los que de verdad se mueven son 2 de cada lado.
@@ -105,36 +123,49 @@ Cuando subes o bajas, la app te manda una notificación el domingo. No te entera
 `En la tabla de tu categoría se marcan las orillas, para que sepas qué está en juego cada semana.
 
 ## Si estás en Categoría A
-Los **3 últimos** de la tabla aparecen marcados en **zona de descenso**. De esos, los **2 últimos** bajan a B el domingo. Estar marcado no significa que ya bajaste: significa que una buena noche te saca de ahí.
+Los **3 últimos** de la tabla aparecen marcados en **zona de descenso**. De esos, los **2 con peor promedio por noche** bajan a B el domingo. Estar marcado no significa que ya bajaste: significa que una buena noche te saca de ahí.
 
 ## Si estás en Categoría B
-Los **3 primeros** aparecen en **zona de ascenso**, y los **2 primeros** suben a A el domingo. Es la forma directa de subir: ganar en B.
+Los **3 primeros** aparecen en **zona de ascenso**, y los **2 con mejor promedio** suben a A el domingo. Es la forma directa de subir: ganar en B.
+
+## Si tu puntaje dice "Provisional"
+Quiere decir que todavía no llegas a 3 noches jugadas en tu ventana. Apareces en la tabla, pero fuera del intercambio: ni bajas ni subes hasta completar esas noches.
 
 ## Por qué solo se mueven 2
 Porque el puntaje móvil son tus últimas 6 escaleras y los de media tabla están muy cerca unos de otros: si se recalculara todo cada semana, media liga andaría cambiando de categoría todo el tiempo y nadie llegaría a conocer a su grupo. Con 2 y 2, la categoría se siente estable y aun así siempre hay algo que pelear.
 
 ## Si las categorías se desbalancean
-Si por altas o bajas una categoría queda con dos o más jugadores de diferencia que la otra, ese domingo se mueve **uno extra** hacia la más chica, para que las dos tengan gente suficiente para llenar sus noches.` },
+Si por altas o bajas una categoría queda con dos o más jugadores activos de diferencia que la otra, ese domingo se mueve **uno extra** hacia la más chica, para que las dos tengan gente suficiente para llenar sus noches.` },
 
 { section_key: 'convocatorias', sort_order: 5, title: 'Convocatorias y listas de espera', body_markdown:
 `## Cuándo abren
 Las convocatorias de **toda la semana** se publican de golpe cada **domingo a las 10:00 am** (hora CDMX), una hora después de que se recalculan las categorías.
 
-## Domingo de 10:00 am a 6:00 pm — ventana del top 12
-Durante esas 8 horas, los **12 mejores del ranking** de tu categoría pueden apartar su lugar en **todos los eventos de la semana**. Es la ventaja de ir arriba en el ranking: escoges primero.
+## Cada noche parte sus lugares en dos
+De los 12 lugares de cada noche:
+- **8 se apartan para el top 12 del ranking** de tu categoría durante el domingo.
+- **4 quedan abiertos para el resto de la categoría**, por orden de llegada, desde las 10:00 am.
 
-En **Individual** apartas tu lugar directo. En **Parejas Fijas** te inscribes con la pareja que quieras; tu lugar es **provisional** hasta las 6:00 pm, porque las parejas se ordenan por el **promedio de puntos de los dos**. Si se anota una pareja con mejor promedio, pueden desplazarlos a lista de espera.
+Así el ranking sigue valiendo, pero la noche nunca se cierra completa a las 10:01 del domingo: siempre hay puerta de entrada aunque no vayas arriba.
 
-Si **no** estás en el top 12, durante esas horas puedes **pedir entrar a la lista de espera**. No es automático: si no lo pides, no te formas.
+## Domingo de 10:00 am a 6:00 pm
+Si vas en el **top 12**, puedes apartar uno de los 8 lugares reservados. Si esos 8 ya se llenaron, te formas en la lista de espera: los 4 abiertos son para los demás hasta las 6:00 pm.
 
-## Domingo 6:00 pm — se acaba la preferencia
+Si **no** vas en el top 12, puedes tomar uno de los 4 lugares abiertos en cuanto abre la convocatoria. Si ya se acabaron, te anotas a la lista de espera.
+
+En **Individual** apartas tu lugar directo. En **Parejas Fijas** te inscribes con la pareja que quieras; si entran por los lugares del ranking, su lugar es **provisional** hasta las 6:00 pm, porque esas parejas se ordenan por el **promedio de puntos de las dos personas**.
+
+## Domingo 6:00 pm — se acaba la separación
 A esa hora:
 1. Quien tenía ventaja y no la usó, la pierde para esa semana.
-2. Los lugares que sobren se reparten **por orden de llegada** entre quienes ya estaban en la lista de espera.
+2. Los lugares que sobren se reparten **por orden de llegada** entre quienes ya estaban en la lista de espera, sin distinguir top o no top.
 3. La convocatoria queda **abierta para cualquiera** el resto de la semana, también por orden de llegada.
 
+## Cada quien ve su categoría
+En Convocatorias solo aparecen las noches de **tu** categoría. Si crees que te toca otra, habla con recepción: ellos sí pueden meterte, pero tienen que confirmarlo a propósito.
+
 ## Lista de espera
-Es estrictamente **por orden de solicitud**: el primero que la pidió es el primero que entra. No influyen los puntos ni la categoría. Cuando alguien se da de baja, el sistema mete al siguiente de la fila automáticamente y le manda aviso.
+Es estrictamente **por orden de solicitud**: el primero que la pidió es el primero que entra. Cuando alguien se da de baja, el sistema mete al siguiente de la fila automáticamente y le manda aviso.
 
 ## Hasta cuándo te puedes anotar
 La lista sigue abierta **hasta que recepción arranca la noche**, no hasta la hora de inicio. Si llegas al club y todavía hay lugar, te puedes anotar ahí mismo desde tu teléfono o pedirle a recepción que te meta. En cuanto le dan "Comenzar escalera" la lista se cierra: ya nadie entra.
@@ -153,11 +184,13 @@ Si ya tienes lugar pero no vas a poder ir, tú mismo eliges tu sustituto desde l
 Dejar sustituto **nunca tiene penalización**, aunque falten menos de 12 horas.
 
 ## En Parejas Fijas no hay sustituto
-Si uno de los dos no puede ir, **se cae la pareja completa** y se libera su lugar. Es la única forma justa: el formato depende de que jueguen los mismos dos toda la noche.
+Si uno de los dos no puede ir, **se cae la pareja completa** y se libera su lugar. Es la única forma justa: el formato depende de que jueguen los mismos dos toda la noche. Al compañero arrastrado no le cae ninguna penalización.
 
 ## Bajas: la regla de las 12 horas
 - **12 horas o más antes** de la sesión: sin penalización, tu lugar simplemente se libera.
-- **Menos de 12 horas**: solo hay penalización **si nadie toma tu lugar**. Si consigues sustituto, o si alguien de la lista de espera entra en tu lugar de inmediato, no se te cobra nada. Si no, se descuenta el **15% de tus puntos del mes**.
+- **Menos de 12 horas**: solo hay penalización **si nadie toma tu lugar**. Si consigues sustituto, o si alguien de la lista de espera entra en tu lugar de inmediato, no se te cobra nada. Si no, se descuenta el **15% de tu puntaje móvil** (el de tus últimas 6 noches).
+
+Se cobra sobre el puntaje móvil y no sobre "los puntos del mes" justamente para que cueste lo mismo faltar el día 2 que el día 28. Y la noche que no jugaste **no te ocupa un lugar de tus 6**: el castigo es solo el que la app te anuncia.
 
 La app te dice exactamente qué va a pasar **antes** de que confirmes la baja: nunca es sorpresa.
 
@@ -167,13 +200,13 @@ Si en una misma semana **confirmas todos tus eventos y luego te das de baja de t
 La app te avisa antes de la baja que te va a costar la ventaja, y te manda una notificación cuando pasa.
 
 ## Sustituto de coach
-Si quien cubre es un coach del club, el coach **no acumula puntos** y tú recibes la penalización completa según el tiempo de aviso — igual que si no hubieras conseguido sustituto.
+Si quien cubre es un coach del club, el coach **no acumula puntos** y a ti esa noche **no te cuenta**: no ganas puntos, pero tampoco te entra un cero al promedio. Si te bajaste tarde y nadie más iba a tomar tu lugar, la penalización por la baja sí aplica normal.
 
 ## Sustituto autorizado por administración
 Para emergencias reales (médicas, por ejemplo), recepción puede meter un sustituto **sin reparto de puntos**: el sustituto se lleva el 100% de lo que gane porque sí jugó, y al ausente esa noche simplemente **no le cuenta** — ni puntos ni penalización. Es el único caso en el que sí se puede meter sustituto en Parejas Fijas, para que su compañero no se quede sin jugar. Queda a criterio del administrador.
 
 ## No presentarse
-Si no llegas y no avisaste, es **no-show**: se descuenta el **50% de tus puntos del mes** y puede aplicar multa.` },
+Si no llegas y no avisaste, es **no-show**: se descuenta el **50% de tu puntaje móvil** y puede aplicar multa.` },
 
 { section_key: 'liguilla', sort_order: 7, title: 'Liguilla y Torneo de Ascenso', body_markdown:
 `Una vez al mes, en lugar de la sesión normal de esa semana, se juega la **Liguilla** (Categoría A) y el **Torneo de Ascenso** (Categoría B).
@@ -189,7 +222,7 @@ En esa misma pestaña, durante todo el mes, ves:
 - Si matemáticamente ya no alcanzas este mes, también te lo dice claro.
 
 ## Quién califica
-Los **12 mejores** de cada categoría por puntaje móvil al cierre del mes. La confirmación de asistencia se cierra **24 horas antes** del evento.
+Los **12 mejores** de cada categoría según el ranking (promedio por noche) al cierre del mes. La confirmación de asistencia se cierra **24 horas antes** del evento.
 
 ## El draft
 El jugador mejor posicionado (rank 1) elige primero a su pareja de entre los calificados; el elegido tiene que **aceptar**. Si a alguna pareja le quedan menos de 2 horas sin formarse, el sistema la autogenera para no atrasar el evento.

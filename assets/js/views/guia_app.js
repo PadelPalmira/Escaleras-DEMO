@@ -99,7 +99,7 @@ export function renderGuiaApp({ profile, recomendacion = null, esNuevo, onDone }
       render: () => Promise.resolve(slideCard(
         icon.coin,
         'Tus puntos y tu categoría',
-        ['Ganas puntos por cada game y por ganar el partido — y más si juegas en cancha 1.', 'Tu categoría (A o B) se recalcula cada domingo según tus últimas 6 escaleras — no es algo fijo para siempre.', 'El detalle completo con todas las cifras está siempre en la pestaña Reglas.']
+        ['Ganas puntos por cada game y por ganar el partido — y más si juegas en cancha 1.', 'Tu categoría (A o B) se recalcula cada domingo según tu PROMEDIO de puntos por noche de tus últimas 6 escaleras — no es algo fijo para siempre.', 'El detalle completo con todas las cifras está siempre en la pestaña Reglas.']
       )),
     });
 
@@ -158,7 +158,7 @@ export function renderGuiaApp({ profile, recomendacion = null, esNuevo, onDone }
     if (cat && cat.category) {
       const box = el('div', { class: 'card mt-1', style: 'background:var(--surface-2);' });
       box.appendChild(el('div', { class: 'text-tiny', style: 'font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:0.04em;' }, `Categoría ${cat.category}`));
-      box.appendChild(el('p', { class: 'text-muted mt-2', style: 'font-size:13.5px;' }, 'Se recalcula cada domingo según tus últimas 6 escaleras — puedes ver el detalle completo en la pestaña Ranking.'));
+      box.appendChild(el('p', { class: 'text-muted mt-2', style: 'font-size:13.5px;' }, 'Se recalcula cada domingo con tu promedio de puntos por noche de las últimas 6 escaleras — puedes ver el detalle completo en la pestaña Ranking.'));
       card.appendChild(box);
     } else {
       card.appendChild(el('p', { class: 'text-muted', style: 'font-size:14.5px;line-height:1.6;' }, 'Todavía no tenemos suficiente historial reciente tuyo para calcular tu categoría — en cuanto juegues tus próximas escaleras, el sistema te ubica solo.'));
