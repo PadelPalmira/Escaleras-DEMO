@@ -1,4 +1,4 @@
-import { el, todayISO, formatFecha, formatFechaHora, toast, humanizeError, openSheet, confirmSheet } from '../utils.js';
+import { el, todayISO, formatFecha, formatFechaHora, toast, humanizeError, openSheet, confirmSheet, avatarContent, chipJugador } from '../utils.js';
 import {
   getMyProfile, esAdminOMaestro, buscarJugadores,
   getRegistrosActivosDeJugador, asignarSustituto, marcarNoShow, cancelarRegistro,
@@ -44,9 +44,12 @@ async function pintarResultados(box, filtro, wrap) {
   jugadores.forEach((j, i) => {
     if (i > 0) list.appendChild(el('hr', { class: 'sep', style: 'margin:10px 0;' }));
     list.appendChild(el('button', {
-      class: 'chip-btn', style: 'width:100%;',
+      class: 'chip-btn chip-jugador', style: 'width:100%;',
       onclick: () => pintarFicha(wrap, j),
-    }, `${j.full_name || '(sin nombre)'}${j.status !== 'active' ? '  ·  ' + (j.status === 'suspended' ? 'Suspendido' : 'Inactivo') : ''}`));
+    }, [
+      el('span', { class: 'avatar-mini' }, avatarContent(j)),
+      el('span', {}, `${j.full_name || '(sin nombre)'}${j.status !== 'active' ? '  ·  ' + (j.status === 'suspended' ? 'Suspendido' : 'Inactivo') : ''}`),
+    ]));
   });
   box.appendChild(list);
 }
@@ -58,6 +61,7 @@ async function pintarFicha(wrap, jugador) {
   const refresh = () => pintarFicha(wrap, jugador);
 
   wrap.appendChild(el('div', { class: 'card', style: 'text-align:center;' }, [
+    el('div', { class: 'avatar-btn', style: 'width:72px;height:72px;font-size:22px;margin:0 auto 12px;' }, avatarContent(jugador)),
     el('div', { class: 'h2' }, jugador.full_name || 'Sin nombre'),
     el('div', { class: 'text-tiny mt-1' }, jugador.email),
     jugador.status !== 'active' ? el('span', { class: 'badge badge-warning mt-2' }, jugador.status === 'suspended' ? 'Suspendido' : 'Inactivo') : null,
@@ -181,13 +185,10 @@ async function abrirSustituto(registro, jugador, onChange) {
     const jugadores = await buscarJugadores(filtro, 20);
     list.innerHTML = '';
     jugadores.filter((j) => j.id !== jugador.id).forEach((j) => {
-      list.appendChild(el('button', {
-        class: 'chip-btn',
-        onclick: async () => {
-          try { await asignarSustituto(registro.id, j.id, esCoach); toast(`${j.full_name} jugará en su lugar.`, 'success'); handle.close(); onChange(); }
-          catch (err) { toast(humanizeError(err), 'error'); }
-        },
-      }, j.full_name || '(sin nombre)'));
+      list.appendChild(chipJugador(j, async () => {
+        try { await asignarSustituto(registro.id, j.id, esCoach); toast(`${j.full_name} jugará en su lugar.`, 'success'); handle.close(); onChange(); }
+        catch (err) { toast(humanizeError(err), 'error'); }
+      }));
     });
     if (list.children.length === 0) list.appendChild(el('p', { class: 'text-muted' }, 'Sin resultados.'));
   }

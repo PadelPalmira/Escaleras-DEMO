@@ -1,4 +1,4 @@
-import { el, todayISO, formatFecha, formatHora, toast, humanizeError, openSheet, confirmSheet } from '../utils.js';
+import { el, todayISO, formatFecha, formatHora, toast, humanizeError, openSheet, confirmSheet, avatarContent, chipJugador } from '../utils.js';
 import { icon } from '../icons.js';
 import {
   getMyProfile, esAdminOMaestro,
@@ -682,8 +682,10 @@ function renderSinConfirmar(confirmados, refresh) {
   pend.forEach((r, i) => {
     if (i > 0) card.appendChild(el('hr', { class: 'sep', style: 'margin:10px 0;' }));
     else card.appendChild(el('hr', { class: 'sep', style: 'margin:12px 0 10px;' }));
-    card.appendChild(el('div', { style: 'font-weight:600;font-size:14px;' },
-      (r.profiles && r.profiles.full_name) || '(sin nombre)'));
+    card.appendChild(el('div', { class: 'row gap-2', style: 'align-items:center;font-weight:600;font-size:14px;' }, [
+      el('span', { class: 'avatar-mini' }, avatarContent(r.profiles || {})),
+      el('span', {}, (r.profiles && r.profiles.full_name) || '(sin nombre)'),
+    ]));
     card.appendChild(el('div', { class: 'btn-row mt-2' }, [
       el('button', { class: 'btn btn-secondary btn-sm', onclick: async (e) => {
         e.target.disabled = true;
@@ -722,7 +724,7 @@ function abrirCambioEnCancha(esc, ronda, refresh) {
     [[m.team1_player1, m.team1_player1_nombre], [m.team1_player2, m.team1_player2_nombre],
      [m.team2_player1, m.team2_player1_nombre], [m.team2_player2, m.team2_player2_nombre]]
       .forEach(([id, prof]) => {
-        if (id) enCancha.push({ id, nombre: (prof && prof.full_name) || '(sin nombre)', cancha: m.court_number });
+        if (id) enCancha.push({ id, full_name: (prof && prof.full_name) || '(sin nombre)', avatar_url: prof && prof.avatar_url, cancha: m.court_number });
       });
   });
 
@@ -740,7 +742,7 @@ function abrirCambioEnCancha(esc, ronda, refresh) {
   const listaSale = el('div', {});
   enCancha.forEach((j) => {
     listaSale.appendChild(el('button', {
-      class: 'btn btn-secondary btn-sm mt-2', style: 'width:100%;text-align:left;',
+      class: 'btn btn-secondary btn-sm mt-2', style: 'width:100%;text-align:left;display:flex;align-items:center;gap:8px;',
       onclick: () => {
         sel.sale = j;
         Array.from(listaSale.children).forEach((b) => b.classList.remove('btn-primary'));
@@ -749,7 +751,10 @@ function abrirCambioEnCancha(esc, ronda, refresh) {
         });
         pintarPaso2();
       },
-    }, `Cancha ${j.cancha} · ${j.nombre}`));
+    }, [
+      el('span', { class: 'avatar-mini' }, avatarContent(j)),
+      el('span', {}, `Cancha ${j.cancha} · ${j.full_name}`),
+    ]));
     listaSale.lastChild.dataset.id = j.id;
   });
   content.appendChild(el('div', { class: 'text-tiny', style: 'text-transform:uppercase;letter-spacing:0.05em;color:var(--text-tertiary);' }, '1. ¿Quién sale?'));
@@ -788,9 +793,12 @@ function abrirCambioEnCancha(esc, ronda, refresh) {
       res.filter((j) => j.id !== sel.sale.id && !enCancha.some((x) => x.id === j.id))
          .forEach((j) => {
         lista.appendChild(el('button', {
-          class: 'btn btn-secondary btn-sm mt-2', style: 'width:100%;text-align:left;',
+          class: 'btn btn-secondary btn-sm mt-2', style: 'width:100%;text-align:left;display:flex;align-items:center;gap:8px;',
           onclick: () => { sel.entra = j; actualizarResumen(); },
-        }, j.full_name || '(sin nombre)'));
+        }, [
+          el('span', { class: 'avatar-mini' }, avatarContent(j)),
+          el('span', {}, j.full_name || '(sin nombre)'),
+        ]));
       });
       if (!lista.children.length) lista.appendChild(el('p', { class: 'text-tiny mt-2' }, 'Nadie con ese nombre.'));
     };
@@ -800,7 +808,7 @@ function abrirCambioEnCancha(esc, ronda, refresh) {
 
   function actualizarResumen() {
     resumen.textContent = sel.sale
-      ? `Sale ${sel.sale.nombre} (cancha ${sel.sale.cancha}) · Entra ${sel.entra ? (sel.entra.full_name || '(sin nombre)') : '—'}`
+      ? `Sale ${sel.sale.full_name} (cancha ${sel.sale.cancha}) · Entra ${sel.entra ? (sel.entra.full_name || '(sin nombre)') : '—'}`
       : '';
     btnGuardar.disabled = !(sel.sale && sel.entra);
   }
@@ -828,10 +836,13 @@ function renderRoster(esc, ws, registros, confirmados, enEspera, cupo, refresh) 
     if (i > 0) card.appendChild(el('hr', { class: 'sep', style: 'margin:10px 0;' }));
     const st = REG_STATUS[r.status] || { text: r.status, cls: 'badge-neutral' };
     card.appendChild(el('div', { class: 'row-between' }, [
-      el('div', {}, [
-        el('div', { style: 'font-weight:600;font-size:14px;' },
-          (r.profiles && r.profiles.full_name) || '(sin nombre)'),
-        el('div', { class: 'text-tiny' }, extra || (r.is_coach_substitute ? 'Sustituto — coach' : '')),
+      el('div', { class: 'row gap-2', style: 'align-items:center;' }, [
+        el('span', { class: 'avatar-mini' }, avatarContent(r.profiles || {})),
+        el('div', {}, [
+          el('div', { style: 'font-weight:600;font-size:14px;' },
+            (r.profiles && r.profiles.full_name) || '(sin nombre)'),
+          el('div', { class: 'text-tiny' }, extra || (r.is_coach_substitute ? 'Sustituto — coach' : '')),
+        ]),
       ]),
       el('span', { class: `badge ${st.cls}` }, st.text),
     ]));
@@ -939,7 +950,12 @@ function abrirAgregarJugador(esc, ws, refresh) {
       if (!gente.length) { lista.appendChild(el('p', { class: 'text-tiny' }, 'Nadie con ese nombre.')); return; }
       gente.forEach((p) => lista.appendChild(el('div', {
         class: 'fila-enlace', onclick: () => elegir(p),
-      }, p.full_name || '(sin nombre)')));
+      }, [
+        el('div', { class: 'row gap-2', style: 'align-items:center;' }, [
+          el('span', { class: 'avatar-mini' }, avatarContent(p)),
+          el('span', {}, p.full_name || '(sin nombre)'),
+        ]),
+      ])));
     }, 250);
   });
 
@@ -1166,23 +1182,20 @@ function abrirSustituto(registro, onChange, formato) {
     jugadores
       .filter((j) => j.id !== registro.player_id && (j.full_name || '').trim())
       .forEach((j) => {
-      list.appendChild(el('button', {
-        class: 'chip-btn',
-        onclick: async (e) => {
-          e.target.disabled = true;
-          try {
-            if (modo === 'emergencia') {
-              await asignarSustitutoAdmin(registro.id, j.id, motivoInput.value.trim() || null);
-              toast(`${j.full_name} juega en su lugar, sin reparto de puntos ni penalización.`, 'success', 5200);
-            } else {
-              await asignarSustituto(registro.id, j.id, modo === 'coach');
-              toast(`${j.full_name} jugará en su lugar.`, 'success');
-            }
-            handle.close();
-            onChange();
-          } catch (err) { toast(humanizeError(err), 'error', 6000); e.target.disabled = false; }
-        },
-      }, j.full_name || '(sin nombre)'));
+      list.appendChild(chipJugador(j, async (e) => {
+        e.target.closest('button').disabled = true;
+        try {
+          if (modo === 'emergencia') {
+            await asignarSustitutoAdmin(registro.id, j.id, motivoInput.value.trim() || null);
+            toast(`${j.full_name} juega en su lugar, sin reparto de puntos ni penalización.`, 'success', 5200);
+          } else {
+            await asignarSustituto(registro.id, j.id, modo === 'coach');
+            toast(`${j.full_name} jugará en su lugar.`, 'success');
+          }
+          handle.close();
+          onChange();
+        } catch (err) { toast(humanizeError(err), 'error', 6000); e.target.closest('button').disabled = false; }
+      }));
     });
     if (list.children.length === 0) list.appendChild(el('p', { class: 'text-muted' }, 'Sin resultados.'));
   }

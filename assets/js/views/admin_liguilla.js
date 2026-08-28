@@ -1,4 +1,4 @@
-import { el, formatFecha, toast, humanizeError, openSheet, confirmSheet, ahora } from '../utils.js';
+import { el, formatFecha, toast, humanizeError, openSheet, confirmSheet, ahora, avatarContent, chipJugador } from '../utils.js';
 import { icon } from '../icons.js';
 import {
   getMyProfile, esAdminOMaestro,
@@ -138,9 +138,12 @@ async function pintarDetalle(wrap, eventId) {
     calificados.forEach((c, i) => {
       if (i > 0) list.appendChild(el('hr', { class: 'sep', style: 'margin:10px 0;' }));
       const row = el('div', { class: 'row-between' }, [
-        el('div', {}, [
-          el('div', { style: 'font-weight:600;font-size:14px;' }, (c.profiles && c.profiles.full_name) || '(sin nombre)'),
-          el('div', { class: 'text-tiny' }, `Seed ${c.seed}`),
+        el('div', { class: 'row gap-2', style: 'align-items:center;' }, [
+          el('span', { class: 'avatar-mini' }, avatarContent(c.profiles || {})),
+          el('div', {}, [
+            el('div', { style: 'font-weight:600;font-size:14px;' }, (c.profiles && c.profiles.full_name) || '(sin nombre)'),
+            el('div', { class: 'text-tiny' }, `Seed ${c.seed}`),
+          ]),
         ]),
         el('span', { class: 'badge badge-neutral' }, QUALIFIER_STATUS_LABEL[c.status] || c.status),
       ]);
@@ -254,13 +257,10 @@ function abrirSustituirCalificado(calificado, onChange) {
     const jugadores = await buscarJugadores(filtro, 20);
     list.innerHTML = '';
     jugadores.filter((j) => j.id !== calificado.player_id).forEach((j) => {
-      list.appendChild(el('button', {
-        class: 'chip-btn',
-        onclick: async () => {
-          try { await sustituirCalificadoLiguilla(calificado.id, j.id); toast(`${j.full_name} sustituye a ${(calificado.profiles && calificado.profiles.full_name) || ''}.`, 'success'); handle.close(); onChange(); }
-          catch (err) { toast(humanizeError(err), 'error'); }
-        },
-      }, j.full_name || '(sin nombre)'));
+      list.appendChild(chipJugador(j, async () => {
+        try { await sustituirCalificadoLiguilla(calificado.id, j.id); toast(`${j.full_name} sustituye a ${(calificado.profiles && calificado.profiles.full_name) || ''}.`, 'success'); handle.close(); onChange(); }
+        catch (err) { toast(humanizeError(err), 'error'); }
+      }));
     });
     if (list.children.length === 0) list.appendChild(el('p', { class: 'text-muted' }, 'Sin resultados.'));
   }

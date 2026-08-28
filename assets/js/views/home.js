@@ -1,4 +1,4 @@
-import { el, todayISO, formatFecha, formatHora, initials } from '../utils.js';
+import { el, todayISO, formatFecha, formatHora, avatarContent } from '../utils.js';
 import { icon } from '../icons.js';
 import {
   getMyProfile, getMiCategoria, getMisRegistros, tiersElegiblesPorCategoria,
@@ -63,7 +63,7 @@ async function renderInicioJugador(profile) {
   const nombre = (profile && profile.full_name) ? profile.full_name.split(' ')[0] : 'Jugador';
   wrap.appendChild(el('div', { class: 'row-between mb-2' }, [
     el('div', { class: 'h1' }, `Hola, ${nombre}`),
-    el('div', { class: 'avatar-btn', style: 'width:44px;height:44px;font-size:15px;' }, initials(profile && profile.full_name)),
+    el('div', { class: 'avatar-btn', style: 'width:44px;height:44px;font-size:15px;' }, avatarContent(profile)),
   ]));
 
   // Tarjeta de la ronda en curso — manda sobre todo lo demás.
@@ -231,7 +231,7 @@ async function renderInicioAdmin(profile) {
 
   wrap.appendChild(el('div', { class: 'row-between mb-2' }, [
     el('div', { class: 'h1' }, `Hola, ${nombre}`),
-    el('div', { class: 'avatar-btn', style: 'width:44px;height:44px;font-size:15px;' }, initials(profile && profile.full_name)),
+    el('div', { class: 'avatar-btn', style: 'width:44px;height:44px;font-size:15px;' }, avatarContent(profile)),
   ]));
   wrap.appendChild(el('p', { class: 'text-muted mb-4' }, 'Esto es lo que te toca administrar.'));
 

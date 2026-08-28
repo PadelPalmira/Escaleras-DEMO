@@ -1,4 +1,4 @@
-import { el, formatFecha, initials, toast, humanizeError, confirmSheet, ahora } from '../utils.js';
+import { el, formatFecha, avatarContent, toast, humanizeError, confirmSheet, ahora } from '../utils.js';
 import { icon } from '../icons.js';
 import {
   getMyProfile, getMiCategoria, tiersElegiblesPorCategoria, getEventoLiguillaActivo,
@@ -198,7 +198,7 @@ async function renderCarreraDelMes(tier, eventoMes, profile, onChange) {
           el('div', { class: `row-between${soyYo ? ' text-cyan' : ''}`, style: soyYo ? 'font-weight:800;' : '' }, [
             el('div', { class: 'row gap-2', style: 'align-items:center;' }, [
               el('span', { class: 'rank-num' }, String(r.rnk)),
-              el('span', { class: 'avatar-mini' }, initials(r.full_name)),
+              el('span', { class: 'avatar-mini' }, avatarContent(r)),
               el('span', {}, r.full_name || 'Jugador'),
             ]),
             el('span', { style: 'font-variant-numeric:tabular-nums;' }, Number(r.rolling_points || 0).toFixed(0)),

@@ -977,6 +977,7 @@ function makeQuery(table) {
   let mode = 'multi';
   let updateFields = null;
   let insertFields = null;
+  let deleteMode = false;
   let orderCol = null, orderAsc = true;
   let limitN = null;
 
@@ -1024,6 +1025,7 @@ function makeQuery(table) {
     maybeSingle() { mode = 'maybeSingle'; return api; },
     update(fields) { updateFields = fields; return api; },
     insert(fields) { insertFields = fields; return api; },
+    delete() { deleteMode = true; return api; },
     then(resolve, reject) {
       try {
         resolve(execute());
@@ -1065,7 +1067,10 @@ function makeQuery(table) {
     if (table === 'suspensions') return DB.suspensions.map((s) => ({ ...clone(s), profiles: clone(DB.profiles.find((p) => p.id === s.player_id)) || null }));
     if (table === 'notifications') return DB.notifications.map(clone);
     if (table === 'system_settings') return DB.system_settings.map(clone);
-    if (table === 'weekday_schedule') return DB.weekday_schedule.map(clone);
+    if (table === 'weekday_schedule') return DB.weekday_schedule.map((ws) => ({
+      ...clone(ws),
+      escaleras: [{ count: DB.escaleras.filter((e) => e.weekday_schedule_id === ws.id).length }],
+    }));
     return [];
   }
 
@@ -1119,10 +1124,43 @@ function makeQuery(table) {
       DB.suspensions.push(row);
       return { data: mode === 'single' ? clone(row) : [clone(row)], error: null };
     }
+    if (table === 'weekday_schedule') {
+      const row = {
+        id: motor.nuevoId(DB, 'ws'),
+        weekday: insertFields.weekday,
+        format: insertFields.format,
+        category: insertFields.category ?? null,
+        start_time: insertFields.start_time,
+        end_time: insertFields.end_time,
+        capacity: insertFields.capacity ?? null,
+        courts: insertFields.courts ?? 3,
+        active: insertFields.active ?? true,
+        created_at: DEMO.ahora().toISOString(),
+        updated_at: DEMO.ahora().toISOString(),
+      };
+      DB.weekday_schedule.push(row);
+      return { data: mode === 'single' ? { ...clone(row), escaleras: [{ count: 0 }] } : [clone(row)], error: null };
+    }
     return { data: null, error: { message: `mock: insert no soportado en tabla "${table}"` } };
   }
 
+  function doDelete() {
+    const arr = ARRAY_TABLES[table];
+    if (!arr) return { data: null, error: { message: `mock: delete no soportado en tabla "${table}"` } };
+    const idx = arr.findIndex((r) => filters.every((f) => f(r)));
+    if (idx === -1) return { data: null, error: null };
+    // Igual que en Postgres real: no se puede borrar un horario que ya
+    // generó convocatorias (hay historial de puntos/partidos que depende
+    // de él) — hay que desactivarlo en vez de borrarlo.
+    if (table === 'weekday_schedule' && DB.escaleras.some((e) => e.weekday_schedule_id === arr[idx].id)) {
+      return { data: null, error: { message: 'No se puede borrar: este horario ya generó convocatorias. Desactívalo en vez de borrarlo.' } };
+    }
+    arr.splice(idx, 1);
+    return { data: null, error: null };
+  }
+
   function execute() {
+    if (deleteMode) return doDelete();
     if (insertFields) return doInsert();
     if (updateFields) return doUpdate();
 
@@ -1190,9 +1228,50 @@ if (DEMO.uid && DB.profiles.some((p) => p.id === DEMO.uid)) {
   currentSession = sesionDe(DEMO.uid);
 }
 
+// Fotos de perfil en la demo: no hay Supabase Storage real, así que la
+// "subida" simplemente convierte la foto ya comprimida (ver avatar.js) a un
+// data: URL y lo guarda junto con el resto de la base de la demo — persiste
+// igual que cualquier otro dato (localStorage), sobrevive a un refresh, y
+// nadie más la ve (es la copia de ESTE navegador, como todo en la demo).
+function blobADataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('No se pudo leer la imagen.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
 export function createClient() {
   log('createClient() — cliente de demo, sin red.');
   return {
+    storage: {
+      from(bucket) {
+        return {
+          async upload(path, blob) {
+            try {
+              const url = await blobADataUrl(blob);
+              DB.__avatarUrls = DB.__avatarUrls || {};
+              DB.__avatarUrls[`${bucket}/${path}`] = url;
+              persistir();
+              return { data: { path }, error: null };
+            } catch (e) {
+              return { data: null, error: { message: (e && e.message) || 'No se pudo procesar la imagen.' } };
+            }
+          },
+          getPublicUrl(path) {
+            DB.__avatarUrls = DB.__avatarUrls || {};
+            return { data: { publicUrl: DB.__avatarUrls[`${bucket}/${path}`] || '' } };
+          },
+          async remove(paths) {
+            DB.__avatarUrls = DB.__avatarUrls || {};
+            (paths || []).forEach((p) => { delete DB.__avatarUrls[`${bucket}/${p}`]; });
+            persistir();
+            return { data: null, error: null };
+          },
+        };
+      },
+    },
     auth: {
       async getSession() { return { data: { session: currentSession }, error: null }; },
       async signInWithOtp() {

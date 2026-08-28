@@ -1,12 +1,15 @@
-import { el, formatHora, toast, humanizeError, confirmSheet } from '../utils.js';
+import { el, formatHora, toast, humanizeError, confirmSheet, avatarContent, chipJugador } from '../utils.js';
 import {
   getMyProfile, esMaestro,
   getSystemSettingsAll, updateSystemSetting, getWeekdayScheduleAll, updateWeekdaySchedule,
+  crearWeekdaySchedule, borrarWeekdaySchedule,
   getStaff, setProfileRole, buscarJugadores, generarEscalerasSemana, getProximasEscaleras,
 } from '../api.js';
 
 const WEEKDAY_LABEL = { lunes: 'Lunes', martes: 'Martes', miercoles: 'Miércoles', jueves: 'Jueves', viernes: 'Viernes', sabado: 'Sábado', domingo: 'Domingo' };
 const FORMAT_LABEL = { individual: 'Individual', parejas: 'Parejas Fijas', retas_abiertas: 'Retas Abiertas' };
+const WEEKDAY_OPTIONS = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'];
+const FORMAT_OPTIONS = ['individual', 'parejas', 'retas_abiertas'];
 
 export async function renderMaestro() {
   const profile = await getMyProfile();
@@ -19,13 +22,9 @@ export async function renderMaestro() {
   wrap.appendChild(el('p', { class: 'text-muted mb-4' }, 'Cambios aquí afectan a todo el club de inmediato — revisa antes de guardar.'));
 
   wrap.appendChild(el('div', { class: 'section-title' }, 'Horarios semanales'));
-  const schedules = await getWeekdayScheduleAll();
-  const schedCard = el('div', { class: 'card' });
-  schedules.forEach((ws, i) => {
-    if (i > 0) schedCard.appendChild(el('hr', { class: 'sep', style: 'margin:14px 0;' }));
-    schedCard.appendChild(renderWeekdayRow(ws));
-  });
-  wrap.appendChild(schedCard);
+  const schedBox = el('div');
+  wrap.appendChild(schedBox);
+  await pintarHorarios(schedBox);
 
   wrap.appendChild(el('div', { class: 'section-title' }, 'Convocatorias de la semana'));
   const convBox = el('div');
@@ -49,7 +48,25 @@ export async function renderMaestro() {
   return wrap;
 }
 
-function renderWeekdayRow(ws) {
+async function pintarHorarios(box) {
+  box.innerHTML = '<p class="text-tiny">Cargando…</p>';
+  const schedules = await getWeekdayScheduleAll();
+  box.innerHTML = '';
+
+  const schedCard = el('div', { class: 'card' });
+  if (schedules.length === 0) {
+    schedCard.appendChild(el('p', { class: 'text-muted' }, 'No hay ningún horario configurado todavía.'));
+  }
+  schedules.forEach((ws, i) => {
+    if (i > 0) schedCard.appendChild(el('hr', { class: 'sep', style: 'margin:14px 0;' }));
+    schedCard.appendChild(renderWeekdayRow(ws, () => pintarHorarios(box)));
+  });
+  box.appendChild(schedCard);
+
+  box.appendChild(el('div', { class: 'mt-4' }, [renderNuevoHorarioForm(() => pintarHorarios(box))]));
+}
+
+function renderWeekdayRow(ws, refresh) {
   const start = el('input', { class: 'input', type: 'time', value: ws.start_time ? ws.start_time.slice(0, 5) : '' });
   const end = el('input', { class: 'input', type: 'time', value: ws.end_time ? ws.end_time.slice(0, 5) : '' });
   const capacity = el('input', { class: 'input', type: 'number', min: '0', value: ws.capacity != null ? String(ws.capacity) : '' });
@@ -62,8 +79,10 @@ function renderWeekdayRow(ws) {
     activeToggle.textContent = activo ? '☑ Activo' : '☐ Inactivo';
   });
 
+  const label = `${WEEKDAY_LABEL[ws.weekday] || ws.weekday} — ${FORMAT_LABEL[ws.format] || ws.format}${ws.category ? ' · Cat ' + ws.category : ''}`;
+
   const row = el('div', {}, [
-    el('div', { style: 'font-weight:700;margin-bottom:8px;' }, `${WEEKDAY_LABEL[ws.weekday] || ws.weekday} — ${FORMAT_LABEL[ws.format] || ws.format}${ws.category ? ' · Cat ' + ws.category : ''}`),
+    el('div', { style: 'font-weight:700;margin-bottom:8px;' }, label),
     el('div', { class: 'grid-2' }, [
       el('div', { class: 'field', style: 'margin-bottom:0;' }, [el('label', {}, 'Inicio'), start]),
       el('div', { class: 'field', style: 'margin-bottom:0;' }, [el('label', {}, 'Fin'), end]),
@@ -74,8 +93,25 @@ function renderWeekdayRow(ws) {
     ]),
     activeToggle,
   ]);
+
+  if (ws.escaleras_generadas > 0) {
+    row.appendChild(el('p', { class: 'text-tiny mt-1', style: 'color:var(--text-tertiary);' },
+      `Ya generó ${ws.escaleras_generadas} convocatoria(s) — para retirarlo, desactívalo (no se puede borrar sin perder ese historial).`));
+  }
+
   const saveBtn = el('button', { class: 'btn btn-secondary btn-sm mt-3', style: 'width:auto;' }, 'Guardar');
   saveBtn.addEventListener('click', async () => {
+    // Apagar un horario tiene consecuencias reales (deja de convocar gente
+    // los domingos) — se explica y se pide confirmación antes de guardar.
+    if (ws.active && !activo) {
+      const ok = await confirmSheet({
+        title: `¿Desactivar "${label}"?`,
+        body: 'A partir de ahora ya no se van a crear convocatorias nuevas para este horario los domingos. Las convocatorias que ya existen (pasadas o de esta semana) no se cancelan ni se tocan. Puedes volver a activarlo cuando quieras.',
+        confirmLabel: 'Sí, desactivar',
+        danger: true,
+      });
+      if (!ok) { activo = true; activeToggle.classList.add('selected'); activeToggle.textContent = '☑ Activo'; return; }
+    }
     saveBtn.disabled = true; saveBtn.textContent = 'Guardando…';
     try {
       await updateWeekdaySchedule(ws.id, {
@@ -89,8 +125,95 @@ function renderWeekdayRow(ws) {
     } catch (err) { toast(humanizeError(err), 'error'); }
     saveBtn.disabled = false; saveBtn.textContent = 'Guardar';
   });
-  row.appendChild(el('div', { class: 'mt-1' }, [saveBtn]));
+
+  const btnRow = el('div', { class: 'mt-1', style: 'display:flex;gap:8px;flex-wrap:wrap;' }, [saveBtn]);
+
+  if (ws.escaleras_generadas === 0) {
+    const delBtn = el('button', { class: 'btn btn-ghost btn-sm', style: 'width:auto;color:var(--danger);' }, 'Borrar horario');
+    delBtn.addEventListener('click', async () => {
+      const ok = await confirmSheet({
+        title: `¿Borrar "${label}"?`,
+        body: 'Este horario nunca generó ninguna convocatoria, así que se puede borrar por completo — no hay historial que perder. Esta acción no se puede deshacer. Si solo quieres dejar de usarlo pero conservarlo por si acaso, mejor desactívalo en vez de borrarlo.',
+        confirmLabel: 'Sí, borrar',
+        danger: true,
+      });
+      if (!ok) return;
+      delBtn.disabled = true; delBtn.textContent = 'Borrando…';
+      try {
+        await borrarWeekdaySchedule(ws.id);
+        toast('Horario borrado.', 'success');
+        refresh();
+      } catch (err) { toast(humanizeError(err), 'error'); delBtn.disabled = false; delBtn.textContent = 'Borrar horario'; }
+    });
+    btnRow.appendChild(delBtn);
+  }
+
+  row.appendChild(btnRow);
   return row;
+}
+
+function renderNuevoHorarioForm(refresh) {
+  const card = el('div', { class: 'card' });
+  card.appendChild(el('div', { style: 'font-weight:700;margin-bottom:8px;' }, 'Nuevo horario'));
+  card.appendChild(el('p', { class: 'text-tiny mb-3' },
+    'Crea una escalera recurrente nueva (por ejemplo, un horario matutino para otra categoría o rama). Se crea inactiva por seguridad — actívala cuando estés listo para que empiece a convocar gente.'));
+
+  const weekdaySel = el('select', { class: 'input' }, WEEKDAY_OPTIONS.map((w) => el('option', { value: w }, WEEKDAY_LABEL[w])));
+  const formatSel = el('select', { class: 'input' }, FORMAT_OPTIONS.map((f) => el('option', { value: f }, FORMAT_LABEL[f])));
+  const categorySel = el('select', { class: 'input' }, [
+    el('option', { value: '' }, '(sin categoría — ej. Retas Abiertas)'),
+    el('option', { value: 'A' }, 'Categoría A'),
+    el('option', { value: 'B' }, 'Categoría B'),
+  ]);
+  const start = el('input', { class: 'input', type: 'time', value: '19:00' });
+  const end = el('input', { class: 'input', type: 'time', value: '22:00' });
+  const capacity = el('input', { class: 'input', type: 'number', min: '0', placeholder: '(sin límite)' });
+  const courts = el('input', { class: 'input', type: 'number', min: '1', value: '3' });
+
+  card.appendChild(el('div', { class: 'grid-2' }, [
+    el('div', { class: 'field', style: 'margin-bottom:0;' }, [el('label', {}, 'Día'), weekdaySel]),
+    el('div', { class: 'field', style: 'margin-bottom:0;' }, [el('label', {}, 'Formato'), formatSel]),
+  ]));
+  card.appendChild(el('div', { class: 'field mt-3' }, [el('label', {}, 'Categoría'), categorySel]));
+  card.appendChild(el('div', { class: 'grid-2 mt-3' }, [
+    el('div', { class: 'field', style: 'margin-bottom:0;' }, [el('label', {}, 'Inicio'), start]),
+    el('div', { class: 'field', style: 'margin-bottom:0;' }, [el('label', {}, 'Fin'), end]),
+  ]));
+  card.appendChild(el('div', { class: 'grid-2 mt-3' }, [
+    el('div', { class: 'field', style: 'margin-bottom:0;' }, [el('label', {}, 'Cupo'), capacity]),
+    el('div', { class: 'field', style: 'margin-bottom:0;' }, [el('label', {}, 'Canchas'), courts]),
+  ]));
+
+  const errBox = el('p', { class: 'text-tiny mt-2', style: 'color:var(--danger);display:none;' });
+  card.appendChild(errBox);
+
+  const createBtn = el('button', { class: 'btn btn-secondary btn-sm mt-3', style: 'width:auto;' }, 'Crear horario');
+  createBtn.addEventListener('click', async () => {
+    errBox.style.display = 'none';
+    if (!start.value || !end.value) {
+      errBox.textContent = 'Falta la hora de inicio o de fin.'; errBox.style.display = 'block'; return;
+    }
+    createBtn.disabled = true; createBtn.textContent = 'Creando…';
+    try {
+      await crearWeekdaySchedule({
+        weekday: weekdaySel.value,
+        format: formatSel.value,
+        category: categorySel.value || null,
+        start_time: start.value,
+        end_time: end.value,
+        capacity: capacity.value ? Number(capacity.value) : null,
+        courts: Number(courts.value) || 1,
+        active: false,
+      });
+      toast('Horario creado (inactivo). Actívalo cuando quieras que empiece a convocar.', 'success');
+      refresh();
+    } catch (err) {
+      errBox.textContent = humanizeError(err); errBox.style.display = 'block';
+      createBtn.disabled = false; createBtn.textContent = 'Crear horario';
+    }
+  });
+  card.appendChild(createBtn);
+  return card;
 }
 
 // Estas horas no las lee solo la app: también están escritas en las tareas
@@ -199,9 +322,12 @@ async function pintarStaff(box) {
   staff.forEach((p, i) => {
     if (i > 0) list.appendChild(el('hr', { class: 'sep', style: 'margin:10px 0;' }));
     const row = el('div', { class: 'row-between' }, [
-      el('div', {}, [
-        el('div', { style: 'font-weight:600;font-size:14px;' }, p.full_name || '(sin nombre)'),
-        el('div', { class: 'text-tiny' }, p.email),
+      el('div', { class: 'row gap-2', style: 'align-items:center;' }, [
+        el('span', { class: 'avatar-mini' }, avatarContent(p)),
+        el('div', {}, [
+          el('div', { style: 'font-weight:600;font-size:14px;' }, p.full_name || '(sin nombre)'),
+          el('div', { class: 'text-tiny' }, p.email),
+        ]),
       ]),
       el('span', { class: `badge ${p.role === 'maestro' ? 'badge-a' : 'badge-neutral'}` }, p.role === 'maestro' ? 'Maestro' : 'Admin'),
     ]);
@@ -233,13 +359,10 @@ async function pintarStaff(box) {
           if (!search.value.trim()) return;
           const jugadores = (await buscarJugadores(search.value, 10)).filter((j) => j.role === 'jugador');
           jugadores.forEach((j) => {
-            results.appendChild(el('button', {
-              class: 'chip-btn',
-              onclick: async () => {
-                try { await setProfileRole(j.id, 'admin'); toast(`${j.full_name} ahora es Admin.`, 'success'); search.value = ''; results.innerHTML = ''; pintarStaff(box); }
-                catch (err) { toast(humanizeError(err), 'error'); }
-              },
-            }, j.full_name || '(sin nombre)'));
+            results.appendChild(chipJugador(j, async () => {
+              try { await setProfileRole(j.id, 'admin'); toast(`${j.full_name} ahora es Admin.`, 'success'); search.value = ''; results.innerHTML = ''; pintarStaff(box); }
+              catch (err) { toast(humanizeError(err), 'error'); }
+            }));
           });
           if (jugadores.length === 0) results.appendChild(el('p', { class: 'text-muted' }, 'Sin resultados.'));
         }, 200);

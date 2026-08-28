@@ -1,10 +1,11 @@
-import { el, initials, formatFecha, formatFechaHora, formatPuntos, toast, humanizeError, ahora } from '../utils.js';
+import { el, avatarContent, formatFecha, formatFechaHora, formatPuntos, toast, humanizeError, ahora } from '../utils.js';
 import { icon } from '../icons.js';
 import { navigate } from '../router.js';
+import { comprimirFotoPerfil } from '../avatar.js';
 import {
   getMyProfile, updateMyProfile, getMiHistorialPuntos, signOut,
   getMisMultas, getMisSuspensiones, getMisNotificaciones, marcarNotificacionLeida,
-  getMiCategoria, getAjusteNum,
+  getMiCategoria, getAjusteNum, subirFotoPerfil, borrarFotoPerfil,
 } from '../api.js';
 
 const FINE_STATUS = { pending: { text: 'Pendiente', cls: 'badge-warning' }, paid: { text: 'Pagada', cls: 'badge-success' }, waived: { text: 'Condonada', cls: 'badge-neutral' } };
@@ -26,6 +27,80 @@ const REASON_LABEL = {
   manual_adjustment: 'Ajuste manual',
 };
 
+function renderTarjetaFoto(profile) {
+  const card = el('div', { class: 'card', style: 'text-align:center;' });
+  const avatarBox = el('div', { class: 'avatar-btn', style: 'width:72px;height:72px;font-size:22px;margin:0 auto 12px;' }, avatarContent(profile));
+  const fileInput = el('input', { type: 'file', accept: 'image/*', style: 'display:none;' });
+  const estado = el('p', { class: 'text-tiny mt-2', style: 'display:none;' }, 'Procesando foto…');
+
+  fileInput.addEventListener('change', async () => {
+    const archivo = fileInput.files && fileInput.files[0];
+    fileInput.value = '';
+    if (!archivo) return;
+    estado.style.display = 'block'; estado.textContent = 'Procesando foto…';
+    botones.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+    try {
+      const { blob, tipo } = await comprimirFotoPerfil(archivo, { maxBytes: 80 * 1024 });
+      estado.textContent = 'Subiendo…';
+      const url = await subirFotoPerfil(blob, tipo);
+      profile.avatar_url = url;
+      refrescarAvatar();
+      toast(`Foto actualizada (${Math.round(blob.size / 1024)} KB).`, 'success');
+      pintarBotones();
+    } catch (err) {
+      toast(humanizeError(err), 'error');
+    }
+    estado.style.display = 'none';
+    botones.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+  });
+
+  // avatarContent() devuelve o un <img> (Node) o las iniciales (texto plano)
+  // según tenga foto o no — appendChild exige un Node, así que un string
+  // crudo lo revienta. Este helper cubre los dos casos.
+  function refrescarAvatar() {
+    avatarBox.innerHTML = '';
+    const contenido = avatarContent(profile);
+    avatarBox.appendChild(contenido instanceof Node ? contenido : document.createTextNode(String(contenido)));
+  }
+
+  const botones = el('div', { class: 'btn-row mt-2' });
+  function pintarBotones() {
+    botones.innerHTML = '';
+    botones.appendChild(el('button', {
+      class: 'btn btn-secondary btn-sm', style: 'width:auto;',
+      onclick: () => fileInput.click(),
+    }, profile.avatar_url ? 'Cambiar foto' : 'Subir foto'));
+    if (profile.avatar_url) {
+      botones.appendChild(el('button', {
+        class: 'btn btn-ghost btn-sm', style: 'width:auto;color:var(--danger);',
+        onclick: async (e) => {
+          e.target.disabled = true;
+          try {
+            await borrarFotoPerfil();
+            profile.avatar_url = null;
+            refrescarAvatar();
+            toast('Foto quitada.', 'success');
+            pintarBotones();
+          } catch (err) { toast(humanizeError(err), 'error'); e.target.disabled = false; }
+        },
+      }, 'Quitar foto'));
+    }
+  }
+  pintarBotones();
+
+  card.appendChild(avatarBox);
+  card.appendChild(el('div', { class: 'h2' }, profile.full_name || 'Sin nombre'));
+  card.appendChild(el('div', { class: 'text-tiny mt-1' }, profile.email));
+  if (profile.status !== 'active') {
+    card.appendChild(el('span', { class: 'badge badge-warning mt-2' }, profile.status === 'suspended' ? 'Suspendido' : 'Inactivo'));
+  }
+  card.appendChild(fileInput);
+  card.appendChild(botones);
+  card.appendChild(el('p', { class: 'text-tiny mt-2' }, 'Es opcional. Tu foto se ve junto a tu nombre en todas las listas — solo tu nombre y estadísticas (al darles click) son visibles para otros jugadores.'));
+  card.appendChild(estado);
+  return card;
+}
+
 export async function renderPerfil() {
   const profile = await getMyProfile();
   if (!profile) return el('div', { class: 'empty-state' }, 'No se pudo cargar tu perfil.');
@@ -41,14 +116,7 @@ export async function renderPerfil() {
 
   const wrap = el('div');
 
-  wrap.appendChild(
-    el('div', { class: 'card', style: 'text-align:center;' }, [
-      el('div', { class: 'avatar-btn', style: 'width:72px;height:72px;font-size:22px;margin:0 auto 12px;' }, initials(profile.full_name)),
-      el('div', { class: 'h2' }, profile.full_name || 'Sin nombre'),
-      el('div', { class: 'text-tiny mt-1' }, profile.email),
-      profile.status !== 'active' ? el('span', { class: 'badge badge-warning mt-2' }, profile.status === 'suspended' ? 'Suspendido' : 'Inactivo') : null,
-    ])
-  );
+  wrap.appendChild(renderTarjetaFoto(profile));
 
   // Acceso al reglamento. Ya no tiene pestaña propia (la barra de abajo se
   // la quedó la Liguilla), así que vive aquí y en Inicio — bien visible, no

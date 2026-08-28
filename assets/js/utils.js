@@ -38,6 +38,31 @@ export function initials(fullName) {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+/**
+ * Contenido para un círculo de avatar (.avatar-btn / .avatar / .avatar-mini):
+ * la foto de perfil si el jugador subió una, o sus iniciales si no. Los
+ * contenedores ya traen el círculo, tamaño y fondo por CSS — esto solo
+ * decide qué va adentro.
+ */
+export function avatarContent(profile) {
+  if (profile && profile.avatar_url) {
+    return el('img', { src: profile.avatar_url, alt: '', loading: 'lazy' });
+  }
+  return initials(profile && profile.full_name);
+}
+
+/**
+ * Botón tipo "chip" para elegir a un jugador de una lista de búsqueda,
+ * con su foto (o iniciales) junto al nombre — se usa en todos los flujos
+ * de "buscar y elegir jugador" (sustituto, admin, pareja, etc.).
+ */
+export function chipJugador(jugador, onClick, extraClass = '') {
+  return el('button', { class: `chip-btn chip-jugador ${extraClass}`.trim(), onclick: onClick }, [
+    el('span', { class: 'avatar-mini' }, avatarContent(jugador)),
+    el('span', {}, jugador.full_name || '(sin nombre)'),
+  ]);
+}
+
 /* ---------------- Fecha / hora (CDMX) ---------------- */
 
 const fmtDate = new Intl.DateTimeFormat('es-MX', { timeZone: CLUB_TZ, weekday: 'long', day: 'numeric', month: 'long' });

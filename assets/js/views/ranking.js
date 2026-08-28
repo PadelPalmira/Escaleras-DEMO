@@ -1,4 +1,4 @@
-import { el, initials, formatFecha } from '../utils.js';
+import { el, avatarContent, formatFecha } from '../utils.js';
 import { getRankingCompleto, getSession, getAjusteNum } from '../api.js';
 
 const CAT_BADGE_CLASS = { A: 'badge-a', B: 'badge-b' };
@@ -74,7 +74,7 @@ export async function renderRanking() {
       const provisional = noches < minNoches;
       listWrap.appendChild(el('div', { class: `list-row ${esMe ? 'me' : ''}` }, [
         el('div', { class: 'rank' }, f.rank != null ? `#${f.rank}` : '—'),
-        el('div', { class: 'avatar' }, initials(nombre)),
+        el('div', { class: 'avatar' }, avatarContent(f.profiles || {})),
         el('div', {}, [
           el('div', { class: 'name' }, nombre + (esMe ? ' (tú)' : '')),
           el('div', { class: 'meta' }, [

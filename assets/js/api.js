@@ -43,6 +43,37 @@ export async function updateMyProfile(fields) {
   return data;
 }
 
+/**
+ * Sube la foto de perfil (ya comprimida en el celular, ver avatar.js) y
+ * actualiza profiles.avatar_url. `upsert:true` reemplaza el archivo anterior
+ * en vez de acumular uno nuevo por cada cambio de foto. El parámetro ?v= es
+ * solo para que el navegador no siga mostrando la foto vieja en caché justo
+ * después de cambiarla — el nombre real del archivo no cambia.
+ */
+export async function subirFotoPerfil(blob, tipo = 'image/webp') {
+  const session = await getSession();
+  if (!session) throw new Error('No hay sesión activa.');
+  const ext = tipo === 'image/jpeg' ? 'jpg' : 'webp';
+  const path = `${session.user.id}.${ext}`;
+  const { error: upErr } = await supabase.storage.from('avatars').upload(path, blob, {
+    upsert: true, contentType: tipo, cacheControl: '3600',
+  });
+  if (upErr) throw upErr;
+  const { data } = supabase.storage.from('avatars').getPublicUrl(path);
+  // El ?v= es solo para romper el caché del navegador tras cambiar de foto —
+  // no aplica a un data: URL (como el que usa la demo), que ya cambia solo.
+  const url = data.publicUrl.startsWith('data:') ? data.publicUrl : `${data.publicUrl}?v=${Date.now()}`;
+  await updateMyProfile({ avatar_url: url });
+  return url;
+}
+/** Quita la foto de perfil (vuelve al avatar de iniciales). */
+export async function borrarFotoPerfil() {
+  const session = await getSession();
+  if (!session) throw new Error('No hay sesión activa.');
+  await supabase.storage.from('avatars').remove([`${session.user.id}.webp`, `${session.user.id}.jpg`]);
+  await updateMyProfile({ avatar_url: null });
+}
+
 /* ============================================================
    Categoría / ranking
    ============================================================ */
@@ -124,7 +155,7 @@ export async function getMisRegistros({ soloFuturas = true } = {}) {
 export async function getJugadoresParaPareja(escaleraId, excluirPlayerId) {
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, full_name')
+    .select('id, full_name, avatar_url')
     .eq('status', 'active')
     .neq('id', excluirPlayerId)
     .order('full_name', { ascending: true });
@@ -367,7 +398,7 @@ export async function getMiCalificacionLiguilla(liguillaEventId, playerId) {
 export async function getCalificadosConfirmados(liguillaEventId) {
   const { data, error } = await supabase
     .from('liguilla_qualifiers')
-    .select('id, player_id, status, profiles(full_name)')
+    .select('id, player_id, status, profiles(full_name, avatar_url)')
     .eq('liguilla_event_id', liguillaEventId)
     .eq('status', 'confirmed');
   if (error) throw error;
@@ -576,7 +607,7 @@ export async function getConteosRegistros(escaleraIds) {
 export async function getRegistrosEscalera(escaleraId) {
   const { data, error } = await supabase
     .from('escalera_registrations')
-    .select('*, profiles(full_name)')
+    .select('*, profiles(full_name, avatar_url)')
     .eq('escalera_id', escaleraId)
     .order('status', { ascending: true });
   if (error) throw error;
@@ -587,7 +618,7 @@ export async function getRegistrosEscalera(escaleraId) {
 // (p.ej. "team1_player1") — PostgREST no sabe distinguir el embed del
 // campo crudo y el resultado queda ambiguo/roto. Por eso cada alias aquí
 // termina en "_nombre".
-const NOMBRES_SEAT = 'team1_player1_nombre:profiles!round_matches_team1_player1_fkey(full_name), team1_player2_nombre:profiles!round_matches_team1_player2_fkey(full_name), team2_player1_nombre:profiles!round_matches_team2_player1_fkey(full_name), team2_player2_nombre:profiles!round_matches_team2_player2_fkey(full_name)';
+const NOMBRES_SEAT = 'team1_player1_nombre:profiles!round_matches_team1_player1_fkey(full_name, avatar_url), team1_player2_nombre:profiles!round_matches_team1_player2_fkey(full_name, avatar_url), team2_player1_nombre:profiles!round_matches_team2_player1_fkey(full_name, avatar_url), team2_player2_nombre:profiles!round_matches_team2_player2_fkey(full_name, avatar_url)';
 
 export async function getRondasConPartidos(escaleraId) {
   const { data: rounds, error } = await supabase
@@ -723,7 +754,7 @@ export async function generarCalificadosLiguilla(eventId, waitlistDepth = 8) {
 export async function getCalificadosLiguillaAdmin(eventId) {
   const { data, error } = await supabase
     .from('liguilla_qualifiers')
-    .select('*, profiles(full_name)')
+    .select('*, profiles(full_name, avatar_url)')
     .eq('liguilla_event_id', eventId)
     .order('seed', { ascending: true });
   if (error) throw error;
@@ -805,12 +836,38 @@ export async function updateSystemSetting(key, value) {
   if (error) throw error;
 }
 export async function getWeekdayScheduleAll() {
-  const { data, error } = await supabase.from('weekday_schedule').select('*').order('weekday', { ascending: true });
+  const { data, error } = await supabase
+    .from('weekday_schedule')
+    .select('*, escaleras(count)')
+    .order('weekday', { ascending: true });
   if (error) throw error;
-  return data;
+  // escaleras(count) llega como [{ count: N }] — lo aplanamos a un número para
+  // que la pantalla decida ahí mismo si un horario se puede borrar (nunca
+  // generó convocatorias) o solo desactivar (ya tiene historial que conservar).
+  return (data || []).map((ws) => {
+    const { escaleras, ...resto } = ws;
+    return { ...resto, escaleras_generadas: escaleras?.[0]?.count ?? 0 };
+  });
 }
 export async function updateWeekdaySchedule(id, fields) {
   const { error } = await supabase.from('weekday_schedule').update(fields).eq('id', id);
+  if (error) throw error;
+}
+/** Crea un horario semanal nuevo (nueva escalera/categoría recurrente). Solo Maestro (RLS). */
+export async function crearWeekdaySchedule(fields) {
+  const { data, error } = await supabase.from('weekday_schedule').insert(fields).select().single();
+  if (error) throw error;
+  return data;
+}
+/**
+ * Borra un horario semanal por completo. Solo Maestro (RLS), y solo tiene
+ * sentido llamarlo cuando el horario nunca generó ninguna convocatoria —
+ * si ya generó alguna, la base de datos rechaza el borrado (hay historial
+ * de puntos/partidos que depende de ese horario) y hay que desactivarlo
+ * en vez de borrarlo.
+ */
+export async function borrarWeekdaySchedule(id) {
+  const { error } = await supabase.from('weekday_schedule').delete().eq('id', id);
   if (error) throw error;
 }
 /**
@@ -879,7 +936,8 @@ export async function getNotificacionesUrgentes(playerId, limite = 3) {
     .is('read_at', null)
     .in('type', ['promocion_lista_espera', 'escalera_cancelada', 'invitacion_pareja',
                  'confirmacion_requerida', 'sustituto_encontrado', 'cambio_categoria',
-                 'privilegio_perdido', 'pareja_cancelada', 'multa_aplicada', 'suspension'])
+                 'privilegio_perdido', 'pareja_cancelada', 'multa_aplicada', 'suspension',
+                 'suspension_levantada', 'cambio_en_cancha'])
     .order('created_at', { ascending: false })
     .limit(limite);
   if (error) throw error;
