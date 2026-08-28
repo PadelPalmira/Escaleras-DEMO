@@ -8,6 +8,7 @@ import {
   cancelarEscaleraAdmin,
   comenzarEscalera, adminAgregarJugador, getAjusteNum,
   iniciarCronometroRonda, horaServidor,
+  responderInvitacionPareja, reemplazarJugadorEnCancha,
 } from '../api.js';
 
 /* El Inicio del Admin manda directo a UNA noche. Se guarda aquí cuál para
@@ -258,6 +259,7 @@ async function pintarDetalle(wrap, escaleraId) {
   // pliega, para que la ronda viva quede lo mas arriba posible.
   if (esc.status === 'scheduled') {
     wrap.appendChild(renderCuantosVan(esc, confirmados.length, cupo, enEspera.length, yaArranco));
+    wrap.appendChild(renderSinConfirmar(confirmados, refresh));
     wrap.appendChild(renderComenzar(esc, confirmados.length, cupo, faltan, completo, refresh));
     wrap.appendChild(renderRoster(esc, ws, registros, confirmados, enEspera, cupo, refresh));
   } else if (esc.status !== 'cancelled') {
@@ -307,6 +309,16 @@ async function pintarDetalle(wrap, escaleraId) {
     cardViva.appendChild(renderPartidoRow(m, refresh));
   });
   wrap.appendChild(cardViva);
+
+  // Alguien se lesiona en la ronda 3 y otro entra en su lugar. Es el unico
+  // camino que de verdad cambia las canchas; el de "sustituto" solo servia
+  // antes de arrancar.
+  if (esc.status === 'in_progress' && pendientes > 0) {
+    wrap.appendChild(el('button', {
+      class: 'btn btn-ghost btn-sm mt-2', style: 'width:auto;',
+      onclick: () => abrirCambioEnCancha(esc, ultimaRonda, refresh),
+    }, 'Cambiar un jugador en cancha'));
+  }
 
   const accionesFinales = el('div', { class: 'stack gap-3 mt-4' });
 
@@ -638,6 +650,164 @@ function pedirMotivoCancelacion(confirmados, cupo) {
     content.appendChild(btnCancelar);
     const handle = openSheet(content, { onClose: () => resolve(null) });
   });
+}
+
+/* ============================================================
+   Invitaciones de pareja sin responder.
+   ------------------------------------------------------------
+   En Parejas Fijas, quien te inscribe deja tu lugar apartado y tu
+   invitacion en "pendiente". La base nunca exigio esa respuesta:
+   comprobado contra produccion, los 12 jugadores de una noche de
+   parejas salieron a la cancha con las 6 invitaciones sin contestar.
+   O sea que te pueden apuntar sin que te enteres, y si no llegas la
+   cancha se queda con 3.
+
+   No se libera el lugar solo — casi siempre la pareja ya lo acordo
+   en persona y quitarlo seria peor. Lo que hace falta es que
+   recepcion lo VEA antes de arrancar y lo resuelva de frente, que es
+   quien tiene a la gente enfrente.
+   ============================================================ */
+function renderSinConfirmar(confirmados, refresh) {
+  const pend = confirmados.filter((r) => r.partner_id && r.partner_status === 'pending');
+  if (!pend.length) return el('span', { style: 'display:none;' });
+
+  const box = el('div', { class: 'mt-4' });
+  const card = el('div', { class: 'card', style: 'border-color:var(--warning);' });
+  card.appendChild(el('div', { style: 'font-weight:800;font-size:15px;' },
+    pend.length === 1 ? 'Falta 1 por confirmar su invitación' : `Faltan ${pend.length} por confirmar su invitación`));
+  card.appendChild(el('p', { class: 'text-tiny mt-1' },
+    'Su pareja los apuntó pero ellos no han contestado en la app. Ya tienen el lugar apartado; '
+    + 'si no van a venir, libéralo para que entre alguien de la lista de espera.'));
+
+  pend.forEach((r, i) => {
+    if (i > 0) card.appendChild(el('hr', { class: 'sep', style: 'margin:10px 0;' }));
+    else card.appendChild(el('hr', { class: 'sep', style: 'margin:12px 0 10px;' }));
+    card.appendChild(el('div', { style: 'font-weight:600;font-size:14px;' },
+      (r.profiles && r.profiles.full_name) || '(sin nombre)'));
+    card.appendChild(el('div', { class: 'btn-row mt-2' }, [
+      el('button', { class: 'btn btn-secondary btn-sm', onclick: async (e) => {
+        e.target.disabled = true;
+        try { await responderInvitacionPareja(r.id, true); toast('Confirmado.', 'success'); refresh(); }
+        catch (err) { toast(humanizeError(err), 'error'); e.target.disabled = false; }
+      } }, 'Sí viene'),
+      el('button', { class: 'btn btn-danger btn-sm', onclick: async () => {
+        const ok = await confirmSheet({
+          title: '¿Liberar el lugar de la pareja?',
+          body: 'En Parejas Fijas se cae la pareja completa: se liberan los DOS lugares y, si hay lista de espera, entra la siguiente pareja. Nadie recibe penalización.',
+          confirmLabel: 'Sí, liberar', danger: true,
+        });
+        if (!ok) return;
+        try { await responderInvitacionPareja(r.id, false); toast('Lugar liberado.', 'success'); refresh(); }
+        catch (err) { toast(humanizeError(err), 'error'); }
+      } }, 'No viene'),
+    ]));
+  });
+
+  box.appendChild(card);
+  return box;
+}
+
+/* ============================================================
+   Cambiar a un jugador que YA esta en una cancha.
+   ------------------------------------------------------------
+   Se lesiona alguien en la ronda 3 y hay quien lo cubra. Antes,
+   "asignar sustituto" solo tocaba la lista de inscritos: el
+   lesionado se quedaba en la cancha de la pantalla, seguia
+   sumando puntos ronda tras ronda, y el que entraba no aparecia
+   en ninguna cancha. Esto si lo cambia donde importa.
+   ============================================================ */
+function abrirCambioEnCancha(esc, ronda, refresh) {
+  const enCancha = [];
+  ronda.partidos.filter((m) => m.status === 'pending').forEach((m) => {
+    [[m.team1_player1, m.team1_player1_nombre], [m.team1_player2, m.team1_player2_nombre],
+     [m.team2_player1, m.team2_player1_nombre], [m.team2_player2, m.team2_player2_nombre]]
+      .forEach(([id, prof]) => {
+        if (id) enCancha.push({ id, nombre: (prof && prof.full_name) || '(sin nombre)', cancha: m.court_number });
+      });
+  });
+
+  const content = el('div', {});
+  content.appendChild(el('div', { class: 'sheet-title' }, 'Cambiar un jugador en cancha'));
+  content.appendChild(el('p', { class: 'text-tiny mb-3' },
+    'Para cuando alguien se lesiona o se tiene que ir a media noche. El que sale conserva '
+    + 'los puntos que ya ganó y no lleva penalización; el que entra juega desde esta ronda '
+    + 'y sus puntos son suyos, sin reparto.'));
+
+  const sel = { sale: null, entra: null };
+  const paso2 = el('div', { class: 'mt-3' });
+  const resumen = el('p', { class: 'text-tiny mt-2' });
+
+  const listaSale = el('div', {});
+  enCancha.forEach((j) => {
+    listaSale.appendChild(el('button', {
+      class: 'btn btn-secondary btn-sm mt-2', style: 'width:100%;text-align:left;',
+      onclick: () => {
+        sel.sale = j;
+        Array.from(listaSale.children).forEach((b) => b.classList.remove('btn-primary'));
+        listaSale.querySelectorAll('button').forEach((b) => {
+          if (b.dataset.id === j.id) b.classList.add('btn-primary');
+        });
+        pintarPaso2();
+      },
+    }, `Cancha ${j.cancha} · ${j.nombre}`));
+    listaSale.lastChild.dataset.id = j.id;
+  });
+  content.appendChild(el('div', { class: 'text-tiny', style: 'text-transform:uppercase;letter-spacing:0.05em;color:var(--text-tertiary);' }, '1. ¿Quién sale?'));
+  content.appendChild(listaSale);
+  content.appendChild(paso2);
+  content.appendChild(resumen);
+
+  const btnGuardar = el('button', { class: 'btn btn-primary mt-3', disabled: 'disabled', onclick: async (e) => {
+    if (!sel.sale || !sel.entra) return;
+    e.target.disabled = true; e.target.textContent = 'Cambiando…';
+    try {
+      const r = await reemplazarJugadorEnCancha(esc.id, sel.sale.id, sel.entra.id, 'Cambio en cancha');
+      toast(`Listo: entra ${r.entra} en la cancha ${r.cancha}.`, 'success');
+      handle.close();
+      refresh();
+    } catch (err) {
+      toast(humanizeError(err), 'error');
+      e.target.disabled = false; e.target.textContent = 'Hacer el cambio';
+    }
+  } }, 'Hacer el cambio');
+
+  function pintarPaso2() {
+    paso2.innerHTML = '';
+    if (!sel.sale) return;
+    paso2.appendChild(el('div', { class: 'text-tiny mt-3', style: 'text-transform:uppercase;letter-spacing:0.05em;color:var(--text-tertiary);' }, '2. ¿Quién entra?'));
+    const buscador = el('input', { class: 'input mt-2', type: 'text', placeholder: 'Escribe un nombre…' });
+    const lista = el('div', { class: 'mt-2' });
+    paso2.append(buscador, lista);
+    let t = null;
+    const buscar = async () => {
+      const q = buscador.value.trim();
+      lista.innerHTML = '';
+      if (q.length < 2) return;
+      let res = [];
+      try { res = await buscarJugadores(q, 8); } catch { res = []; }
+      res.filter((j) => j.id !== sel.sale.id && !enCancha.some((x) => x.id === j.id))
+         .forEach((j) => {
+        lista.appendChild(el('button', {
+          class: 'btn btn-secondary btn-sm mt-2', style: 'width:100%;text-align:left;',
+          onclick: () => { sel.entra = j; actualizarResumen(); },
+        }, j.full_name || '(sin nombre)'));
+      });
+      if (!lista.children.length) lista.appendChild(el('p', { class: 'text-tiny mt-2' }, 'Nadie con ese nombre.'));
+    };
+    buscador.addEventListener('input', () => { clearTimeout(t); t = setTimeout(buscar, 220); });
+    actualizarResumen();
+  }
+
+  function actualizarResumen() {
+    resumen.textContent = sel.sale
+      ? `Sale ${sel.sale.nombre} (cancha ${sel.sale.cancha}) · Entra ${sel.entra ? (sel.entra.full_name || '(sin nombre)') : '—'}`
+      : '';
+    btnGuardar.disabled = !(sel.sale && sel.entra);
+  }
+
+  content.appendChild(btnGuardar);
+  content.appendChild(el('button', { class: 'btn btn-ghost mt-2', onclick: () => handle.close() }, 'Cerrar'));
+  const handle = openSheet(content);
 }
 
 /* ============================================================

@@ -82,7 +82,7 @@ export async function renderPerfil() {
       const row = el('div', {
         class: 'row-between',
         style: n.read_at ? 'opacity:0.55;' : '',
-        onclick: async () => { if (!n.read_at) { try { await marcarNotificacionLeida(n.id); n.read_at = ahora().toISOString(); row.style.opacity = '0.55'; dot && dot.remove(); } catch (err) { toast(humanizeError(err), 'error'); } } },
+        onclick: async () => { if (!n.read_at) { try { await marcarNotificacionLeida(n.id); n.read_at = ahora().toISOString(); row.style.opacity = '0.55'; dot && dot.remove(); window.dispatchEvent(new CustomEvent('avisos-cambiaron')); } catch (err) { toast(humanizeError(err), 'error'); } } },
       }, [
         el('div', {}, [
           el('div', { style: 'font-weight:600;font-size:13.5px;' }, n.title),

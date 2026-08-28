@@ -5,6 +5,7 @@ import {
   getEventoLiguillaActivo, getMiCalificacionLiguilla,
   esAdminOMaestro, esMaestro, getEscalerasAdmin, getConteosRegistros,
   getMiRondaActual, horaServidor,
+  getNotificacionesUrgentes, marcarNotificacionLeida,
 } from '../api.js';
 import { navigate } from '../router.js';
 import { abrirNoche } from './admin_escaleras.js';
@@ -44,6 +45,11 @@ async function renderInicioJugador(profile) {
   if (miRonda && miRonda.cronometro_inicio) {
     try { desfaseMs = Date.now() - (await horaServidor()).getTime(); } catch { desfaseMs = 0; }
   }
+  // Avisos que no se puede permitir no ver. Viven en Perfil, pero ahi casi
+  // nadie entra: "se abrio un lugar y es tuyo" enterado tarde se convierte en
+  // un no-show con penalizacion.
+  let urgentes = [];
+  try { urgentes = profile ? await getNotificacionesUrgentes(profile.id, 3) : []; } catch { urgentes = []; }
 
   const hoy = todayISO();
   const registroHoy = registros.find((r) => r.escaleras && r.escaleras.session_date === hoy && ['confirmed', 'substitute', 'waitlist'].includes(r.status));
@@ -63,6 +69,28 @@ async function renderInicioJugador(profile) {
   // Tarjeta de la ronda en curso — manda sobre todo lo demás.
   if (miRonda) {
     wrap.appendChild(renderMiRonda(miRonda, desfaseMs));
+  }
+
+  if (urgentes.length) {
+    wrap.appendChild(el('div', { class: 'section-title mt-4' },
+      urgentes.length === 1 ? 'Tienes un aviso' : `Tienes ${urgentes.length} avisos`));
+    urgentes.forEach((n) => {
+      const card = el('div', { class: 'card', style: 'border-color:var(--warning);' });
+      card.appendChild(el('div', { style: 'font-weight:800;font-size:15px;' }, n.title));
+      if (n.body) card.appendChild(el('p', { class: 'text-tiny mt-1' }, n.body));
+      card.appendChild(el('button', {
+        class: 'btn btn-secondary btn-sm mt-3', style: 'width:auto;',
+        onclick: async (e) => {
+          e.target.disabled = true;
+          try {
+            await marcarNotificacionLeida(n.id);
+            card.remove();
+            window.dispatchEvent(new CustomEvent('avisos-cambiaron'));
+          } catch { e.target.disabled = false; }
+        },
+      }, 'Enterado'));
+      wrap.appendChild(card);
+    });
   }
 
   // Tarjeta "hoy juegas"

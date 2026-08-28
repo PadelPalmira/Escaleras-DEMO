@@ -980,8 +980,21 @@ function makeQuery(table) {
   let orderCol = null, orderAsc = true;
   let limitN = null;
 
+  let contar = false, soloConteo = false;
+
   const api = {
-    select() { return api; },
+    select(_cols, opts) {
+      // .select('id', { count: 'exact', head: true }) — se usa para el punto
+      // rojo de avisos sin leer.
+      if (opts && opts.count) contar = true;
+      if (opts && opts.head) soloConteo = true;
+      return api;
+    },
+    is(col, val) {
+      // .is('read_at', null)
+      filters.push((r) => (val === null ? (r[col] === null || r[col] === undefined) : r[col] === val));
+      return api;
+    },
     eq(col, val) {
       // La consola de la demo necesita saber qué noche está viendo el Admin
       // para poder ofrecer el atajo de "llenar marcadores".
@@ -1131,7 +1144,9 @@ function makeQuery(table) {
         return 0;
       });
     }
+    if (soloConteo) return { data: null, count: rows.length, error: null };
     if (limitN != null) rows = rows.slice(0, limitN);
+    if (contar) return { data: rows, count: rows.length, error: null };
 
     if (mode === 'single') {
       if (!rows.length) return { data: null, error: { message: 'No rows found' } };
@@ -1330,19 +1345,60 @@ export function createClient() {
         return { data: [miCarreraMock(params.p_tier, params.p_player_id || uidActual())], error: null };
       }
       if (name === 'responder_invitacion_pareja') {
+        // Espeja responder_invitacion_pareja de la base real: actualiza LAS
+        // DOS filas de la pareja (no solo la que se paso), y si se rechaza
+        // libera los dos lugares y promueve lista de espera / reordena la
+        // ventana de parejas, exactamente como hace un rechazo real.
         const reg = DB.escalera_registrations.find((r) => r.id === params.p_registration_id);
-        if (reg) reg.partner_status = params.p_aceptar ? 'confirmed' : 'declined';
+        if (!reg) return { data: null, error: { message: 'Registro no encontrado.' } };
+        if (reg.partner_status !== 'pending') {
+          return { data: null, error: { message: 'Esta invitacion ya fue respondida.' } };
+        }
+        const par = DB.escalera_registrations.filter((r) => r.escalera_id === reg.escalera_id
+          && ((r.player_id === reg.player_id && r.partner_id === reg.partner_id)
+            || (r.player_id === reg.partner_id && r.partner_id === reg.player_id)));
+        const esc = DB.escaleras.find((e) => e.id === reg.escalera_id);
+        if (params.p_aceptar) {
+          par.forEach((r) => { r.partner_status = 'accepted'; });
+          const quien = (DB.profiles.find((p) => p.id === reg.player_id) || {}).full_name || 'Tu pareja';
+          notificar(reg.partner_id, 'pareja_aceptada', 'Tu pareja acepto',
+            `${quien} acepto jugar contigo.`, reg.escalera_id);
+        } else {
+          par.forEach((r) => {
+            r.status = 'declined'; r.partner_status = 'declined';
+            r.cancelled_at = DEMO.ahora().toISOString();
+          });
+          const quien = (DB.profiles.find((p) => p.id === reg.player_id) || {}).full_name || 'La persona que invitaste';
+          notificar(reg.partner_id, 'pareja_rechazada', 'Tu pareja no pudo',
+            `${quien} rechazo la invitacion, asi que se libero su lugar. Puedes invitar a alguien mas.`, reg.escalera_id);
+          if (esc) {
+            const v = ventanaDe(esc.id);
+            if (v.abierta && esc.format === 'parejas') reordenarParejasVentana(esc.id);
+            else promoverEspera(esc.id);
+          }
+        }
         return { data: null, error: null };
       }
       if (name === 'cancelar_registro') {
         return { data: [cancelarRegistroMock(params.p_registration_id)], error: null };
       }
       if (name === 'registrarse_retas_abiertas') {
+        // Retas es libre y sin puntos, pero no sin reglas: comprobado contra
+        // produccion, faltaba impedir anotarse a una noche cancelada/pasada
+        // y faltaba respetar la suspension del jugador.
         const escId = params.p_escalera_id;
         const playerId = currentSession ? currentSession.user.id : ME;
         const esc = DB.escaleras.find((e) => e.id === escId);
         if (!esc) return { data: null, error: { message: 'Convocatoria no encontrada.' } };
         if (esc.format !== 'retas_abiertas') return { data: null, error: { message: 'Esta convocatoria no es Retas Abiertas.' } };
+        if (esc.status === 'cancelled') return { data: null, error: { message: 'Esa noche se cancelo.' } };
+        if (esc.status === 'completed') return { data: null, error: { message: 'Esa noche ya se cerro.' } };
+        const hoyRA = fechaClub(DEMO.ahora());
+        if (esc.session_date < hoyRA) return { data: null, error: { message: 'Esa noche ya paso.' } };
+        const yoRA = DB.profiles.find((p) => p.id === playerId);
+        if (yoRA && yoRA.status === 'suspended') {
+          return { data: null, error: { message: 'Tu cuenta esta suspendida — habla con recepcion.' } };
+        }
         let reg = DB.escalera_registrations.find((r) => r.escalera_id === escId && r.player_id === playerId);
         if (reg) {
           if (reg.status === 'confirmed') return { data: [{ registration_id: reg.id, resultado: 'ya_inscrito' }], error: null };
@@ -1362,14 +1418,107 @@ export function createClient() {
       if (name === 'salir_retas_abiertas') {
         const reg = DB.escalera_registrations.find((r) => r.id === params.p_registration_id);
         if (!reg) return { data: null, error: { message: 'Registro no encontrado.' } };
+        const escSalR = DB.escaleras.find((e) => e.id === reg.escalera_id);
+        if (escSalR && escSalR.status === 'completed') {
+          return { data: null, error: { message: 'Esa noche ya se cerro.' } };
+        }
         reg.status = 'cancelled_ontime';
         reg.cancelled_at = DEMO.ahora().toISOString();
         return { data: 'cancelled_ontime', error: null };
       }
       if (name === 'asignar_sustituto') {
+        // Con la noche YA en juego cambiar el registro no mueve las canchas:
+        // el que se va se queda jugando en la pantalla y el que entra no
+        // aparece en ninguna. Ese caso lo resuelve reemplazar_jugador_en_cancha.
         const reg = DB.escalera_registrations.find((r) => r.id === params.p_registration_id);
-        if (reg) reg.status = 'substitute';
+        if (!reg) return { data: null, error: { message: 'Registro no encontrado.' } };
+        const escSus = DB.escaleras.find((e) => e.id === reg.escalera_id);
+        if (escSus && ['in_progress', 'completed'].includes(escSus.status)) {
+          return { data: null, error: { message: 'Esa noche ya arranco: el cambio de jugador se hace en el momento, con recepcion.' } };
+        }
+        if (escSus && escSus.status === 'cancelled') {
+          return { data: null, error: { message: 'Esa noche esta cancelada.' } };
+        }
+        const susProf = DB.profiles.find((p) => p.id === params.p_sustituto_player_id);
+        if (susProf && susProf.status === 'suspended') {
+          return { data: null, error: { message: 'Ese jugador esta suspendido y no puede entrar como sustituto.' } };
+        }
+        reg.status = 'substitute';
         return { data: { ok: true }, error: null };
+      }
+      if (name === 'reemplazar_jugador_en_cancha') {
+        // Cambio de jugador con la noche YA en juego: mueve al que sale de
+        // TODAS las canchas de la ronda viva y mete al que entra en su lugar,
+        // sin borrar los puntos que el que salio ya gano.
+        const escId = params.p_escalera_id;
+        const sale = params.p_sale_player_id;
+        const entra = params.p_entra_player_id;
+        const esc = DB.escaleras.find((e) => e.id === escId);
+        if (!esc) return { data: null, error: { message: 'Convocatoria no encontrada.' } };
+        if (esc.status !== 'in_progress') {
+          return { data: null, error: { message: 'Esta pantalla es para una noche que ya esta en juego.' } };
+        }
+        if (sale === entra) return { data: null, error: { message: 'Es el mismo jugador.' } };
+        const profEntra = DB.profiles.find((p) => p.id === entra);
+        if (profEntra && profEntra.status === 'suspended') {
+          return { data: null, error: { message: 'Ese jugador esta suspendido.' } };
+        }
+        if (DB.escalera_registrations.some((r) => r.escalera_id === escId && r.player_id === entra
+              && ['confirmed', 'substitute'].includes(r.status))) {
+          return { data: null, error: { message: 'Ese jugador ya esta en esta noche.' } };
+        }
+        const rondasEsc = DB.rounds.filter((r) => r.escalera_id === escId).sort((a, b) => a.round_number - b.round_number);
+        const ultima = rondasEsc[rondasEsc.length - 1];
+        if (!ultima) return { data: null, error: { message: 'Esta noche no tiene rondas.' } };
+        const partidosViva = DB.round_matches.filter((m) => m.round_id === ultima.id);
+        const partidoDeSale = partidosViva.find((m) => m.status === 'pending'
+          && [m.team1_player1, m.team1_player2, m.team2_player1, m.team2_player2].includes(sale));
+        if (!partidoDeSale) {
+          const enOtro = partidosViva.some((m) => [m.team1_player1, m.team1_player2, m.team2_player1, m.team2_player2].includes(sale));
+          if (enOtro) {
+            return { data: null, error: { message: `Los marcadores de la ronda ${ultima.round_number} ya se capturaron. Termina la ronda y arma la siguiente.` } };
+          }
+          return { data: null, error: { message: `Ese jugador no esta en ninguna cancha de la ronda ${ultima.round_number}.` } };
+        }
+        ['team1_player1', 'team1_player2', 'team2_player1', 'team2_player2'].forEach((k) => {
+          if (partidoDeSale[k] === sale) partidoDeSale[k] = entra;
+        });
+        const regSale = DB.escalera_registrations.find((r) => r.escalera_id === escId && r.player_id === sale
+          && ['confirmed', 'substitute'].includes(r.status));
+        if (regSale) {
+          regSale.status = 'cancelled_ontime';
+          regSale.cancelled_at = DEMO.ahora().toISOString();
+          regSale.cubierto_por_lista_espera = true;
+          regSale.admin_substitute_reason = params.p_motivo || 'Cambio en cancha';
+        }
+        let regEntra = DB.escalera_registrations.find((r) => r.escalera_id === escId && r.player_id === entra);
+        if (regEntra) {
+          regEntra.status = 'substitute'; regEntra.partner_id = null; regEntra.partner_status = null;
+          regEntra.confirmed_at = DEMO.ahora().toISOString(); regEntra.cancelled_at = null;
+          regEntra.no_point_split = true;
+          regEntra.admin_substitute_reason = params.p_motivo || 'Cambio en cancha';
+        } else {
+          regEntra = {
+            id: motor.nuevoId(DB, 'r'), escalera_id: escId, player_id: entra,
+            partner_id: null, partner_status: null, status: 'substitute',
+            confirmed_at: DEMO.ahora().toISOString(), no_point_split: true,
+            admin_substitute_reason: params.p_motivo || 'Cambio en cancha',
+          };
+          DB.escalera_registrations.push(regEntra);
+        }
+        const nombreSale = (DB.profiles.find((p) => p.id === sale) || {}).full_name || '?';
+        const nombreEntra = (DB.profiles.find((p) => p.id === entra) || {}).full_name || '?';
+        notificar(sale, 'cambio_en_cancha', 'Saliste de la escalera de hoy',
+          `Recepcion registro tu salida en la ronda ${ultima.round_number}. Los puntos que ya habias ganado se te quedan y no tienes penalizacion.`, escId);
+        notificar(entra, 'cambio_en_cancha', 'Entraste a la escalera de hoy',
+          `Recepcion te metio en la cancha ${partidoDeSale.court_number} desde la ronda ${ultima.round_number}. Los puntos que ganes son tuyos, sin reparto.`, escId);
+        return {
+          data: {
+            ronda: ultima.round_number, cancha: partidoDeSale.court_number,
+            partidos_actualizados: 1, sale: nombreSale, entra: nombreEntra, registro: regEntra.id,
+          },
+          error: null,
+        };
       }
       if (name === 'marcar_no_show') {
         const reg = DB.escalera_registrations.find((r) => r.id === params.p_registration_id);

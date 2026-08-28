@@ -3,7 +3,7 @@ import { el, qs } from './utils.js';
 import { icon } from './icons.js';
 import { whatsappHelpUrl } from './config.js';
 import { registerRoute, initRouter, navigate, currentRoute } from './router.js';
-import { getMyProfile, esAdminOMaestro } from './api.js';
+import { getMyProfile, esAdminOMaestro, contarNotificacionesSinLeer } from './api.js';
 import { renderLoginScreen } from './views/login.js';
 import { renderCompletarPerfil } from './views/completar_perfil.js';
 import { renderGuiaApp } from './views/guia_app.js';
@@ -33,6 +33,7 @@ const NAV_ITEMS_BASE = [
 const NAV_ITEM_ADMIN = { path: '/admin', label: 'Admin', icon: icon.shield };
 
 let appEl, headerEl, viewEl, navEl;
+let perfilActual = null;
 
 function buildShell(navItems) {
   appEl = document.getElementById('app');
@@ -67,6 +68,39 @@ function buildShell(navItems) {
   });
 
   appEl.append(headerEl, viewEl, navEl);
+}
+
+/* Punto rojo en la pestana Perfil.
+   Las notificaciones viven dentro de la app: si nadie las ve, avisos como
+   "se abrio un lugar y es tuyo" o "se cancelo la noche" no sirven de nada.
+   Esto es lo minimo para que se noten al abrir. */
+export async function refrescarAvisos(profile) {
+  if (!navEl) return;
+  // El id se resuelve de la sesion viva, no del perfil que se capturo al
+  // arrancar: si la sesion cambia (o si esta funcion se llama desde un
+  // evento, sin argumento) el punto tiene que reflejar a quien esta dentro
+  // AHORA, no a quien estaba cuando se armo la barra.
+  let pid = (profile && profile.id) || (perfilActual && perfilActual.id) || null;
+  try {
+    const { data } = await supabase.auth.getSession();
+    if (data && data.session && data.session.user) pid = data.session.user.id;
+  } catch { /* si falla, nos quedamos con el del arranque */ }
+  if (!pid) return;
+  let n = 0;
+  try { n = await contarNotificacionesSinLeer(pid); } catch { return; }
+  const btn = Array.from(navEl.children).find((b) => b.dataset.path === '/perfil');
+  if (!btn) return;
+  const previo = btn.querySelector('.nav-punto');
+  if (previo) previo.remove();
+  if (n > 0) {
+    btn.style.position = 'relative';
+    btn.appendChild(el('span', {
+      class: 'nav-punto',
+      style: 'position:absolute;top:4px;right:calc(50% - 20px);min-width:17px;height:17px;'
+        + 'padding:0 4px;border-radius:9px;background:var(--danger);color:#0b0b0d;'
+        + 'font-size:10.5px;font-weight:800;line-height:17px;text-align:center;',
+    }, n > 9 ? '9+' : String(n)));
+  }
 }
 
 function updateActiveNav(path) {
@@ -121,6 +155,7 @@ async function showApp() {
     return;
   }
 
+  perfilActual = profile;
   const navItems = esAdminOMaestro(profile) ? [...NAV_ITEMS_BASE, NAV_ITEM_ADMIN] : NAV_ITEMS_BASE;
 
   buildShell(navItems);
@@ -135,7 +170,10 @@ async function showApp() {
   registerRoute('/admin/liguilla', renderAdminLiguilla);
   registerRoute('/admin/jugadores', renderAdminJugadores);
   registerRoute('/maestro', renderMaestro);
-  initRouter(viewEl, { onNavigateCb: updateActiveNav });
+  initRouter(viewEl, {
+    onNavigateCb: (path) => { updateActiveNav(path); refrescarAvisos(profile); },
+  });
+  refrescarAvisos(profile);
 }
 
 async function boot() {
@@ -146,6 +184,10 @@ async function boot() {
   } else {
     showLoginScreen();
   }
+
+  // Cualquier pantalla que marque un aviso como leido avisa por aqui para
+  // que el punto rojo baje en el momento, sin tener que cambiar de pestana.
+  window.addEventListener('avisos-cambiaron', () => { refrescarAvisos(); });
 
   supabase.auth.onAuthStateChange((event, session) => {
     if (event === 'SIGNED_IN' && !appEl.querySelector('.bottom-nav')) {

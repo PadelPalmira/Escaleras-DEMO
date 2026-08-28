@@ -229,6 +229,21 @@ export async function registrarseRetasAbiertas(escaleraId) {
   return data && data[0] ? data[0] : data;
 }
 
+/* Cambio de jugador con la noche YA en juego: alguien se lesiona en la ronda 3
+   y otro entra en su lugar. Esto SI mueve las canchas, a diferencia de
+   "asignar sustituto", que solo tocaba la lista de inscritos y dejaba al que
+   se fue jugando (y sumando puntos) en la pantalla. */
+export async function reemplazarJugadorEnCancha(escaleraId, salePlayerId, entraPlayerId, motivo) {
+  const { data, error } = await supabase.rpc('reemplazar_jugador_en_cancha', {
+    p_escalera_id: escaleraId,
+    p_sale_player_id: salePlayerId,
+    p_entra_player_id: entraPlayerId,
+    p_motivo: motivo || null,
+  });
+  if (error) throw error;
+  return data;
+}
+
 /** Salirme de una noche de Retas Abiertas — nunca aplica penalización. */
 export async function salirRetasAbiertas(registrationId) {
   const { data, error } = await supabase.rpc('salir_retas_abiertas', { p_registration_id: registrationId });
@@ -843,6 +858,34 @@ export async function getMisNotificaciones(playerId, limite = 30) {
   if (error) throw error;
   return data;
 }
+/* Cuantas trae sin leer, para el punto rojo de la pestana Perfil. */
+export async function contarNotificacionesSinLeer(playerId) {
+  const { count, error } = await supabase
+    .from('notifications')
+    .select('id', { count: 'exact', head: true })
+    .eq('player_id', playerId)
+    .is('read_at', null);
+  if (error) throw error;
+  return count || 0;
+}
+
+/* Las que no puede permitirse no ver: un lugar que se le abrio, una noche
+   cancelada, una invitacion de pareja. Van hasta arriba del Inicio. */
+export async function getNotificacionesUrgentes(playerId, limite = 3) {
+  const { data, error } = await supabase
+    .from('notifications')
+    .select('*')
+    .eq('player_id', playerId)
+    .is('read_at', null)
+    .in('type', ['promocion_lista_espera', 'escalera_cancelada', 'invitacion_pareja',
+                 'confirmacion_requerida', 'sustituto_encontrado', 'cambio_categoria',
+                 'privilegio_perdido', 'pareja_cancelada', 'multa_aplicada', 'suspension'])
+    .order('created_at', { ascending: false })
+    .limit(limite);
+  if (error) throw error;
+  return data || [];
+}
+
 export async function marcarNotificacionLeida(notifId) {
   const { error } = await supabase.from('notifications').update({ read_at: ahora().toISOString() }).eq('id', notifId);
   if (error) throw error;
