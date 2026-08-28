@@ -1,4 +1,4 @@
-import { CLUB_TZ } from './config.js';
+import { CLUB_TZ, APP_URL } from './config.js';
 
 /* ---------------- DOM helpers ---------------- */
 
@@ -61,6 +61,25 @@ export function chipJugador(jugador, onClick, extraClass = '') {
     el('span', { class: 'avatar-mini' }, avatarContent(jugador)),
     el('span', {}, jugador.full_name || '(sin nombre)'),
   ]);
+}
+
+/**
+ * Link de WhatsApp para que recepción/maestro le avise a un jugador que le
+ * falta confirmar una invitación de pareja. A propósito NO se le da opción
+ * de contestar por WhatsApp — el mensaje solo lo manda derechito a la app,
+ * para que la confirmación de verdad quede siempre registrada ahí, nunca
+ * como un "sí" suelto en un chat. Los celulares mexicanos van con 52 + los
+ * 10 dígitos, sin el "1" que ya no hace falta (mismo formato que ya usa
+ * CLUB_WHATSAPP_NUMBER en config.js).
+ * Regresa null si el jugador no tiene un celular de 10 dígitos guardado.
+ */
+export function waLinkConfirmarInvitacion(jugador, sessionDateStr, startTimeStr) {
+  const digitos = ((jugador && jugador.phone) || '').replace(/\D/g, '');
+  if (digitos.length !== 10) return null;
+  const mensaje = `Hola ${jugador.full_name || ''}, tu pareja te apuntó a la escalera del `
+    + `${formatFecha(sessionDateStr)} a las ${formatHora(startTimeStr)} en Padel Palmira. `
+    + `Ya tienes tu lugar apartado — entra a la app para confirmar si vienes: ${APP_URL}#/convocatorias`;
+  return `https://wa.me/52${digitos}?text=${encodeURIComponent(mensaje)}`;
 }
 
 /* ---------------- Fecha / hora (CDMX) ---------------- */

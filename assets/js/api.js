@@ -607,7 +607,7 @@ export async function getConteosRegistros(escaleraIds) {
 export async function getRegistrosEscalera(escaleraId) {
   const { data, error } = await supabase
     .from('escalera_registrations')
-    .select('*, profiles(full_name, avatar_url)')
+    .select('*, profiles(full_name, avatar_url, phone)')
     .eq('escalera_id', escaleraId)
     .order('status', { ascending: true });
   if (error) throw error;

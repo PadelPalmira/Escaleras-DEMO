@@ -1,4 +1,4 @@
-import { el, todayISO, formatFecha, formatHora, toast, humanizeError, openSheet, confirmSheet, avatarContent, chipJugador } from '../utils.js';
+import { el, todayISO, formatFecha, formatHora, toast, humanizeError, openSheet, confirmSheet, avatarContent, chipJugador, waLinkConfirmarInvitacion } from '../utils.js';
 import { icon } from '../icons.js';
 import {
   getMyProfile, esAdminOMaestro,
@@ -259,7 +259,7 @@ async function pintarDetalle(wrap, escaleraId) {
   // pliega, para que la ronda viva quede lo mas arriba posible.
   if (esc.status === 'scheduled') {
     wrap.appendChild(renderCuantosVan(esc, confirmados.length, cupo, enEspera.length, yaArranco));
-    wrap.appendChild(renderSinConfirmar(confirmados, refresh));
+    wrap.appendChild(renderSinConfirmar(esc, ws, confirmados, refresh));
     wrap.appendChild(renderComenzar(esc, confirmados.length, cupo, faltan, completo, refresh));
     wrap.appendChild(renderRoster(esc, ws, registros, confirmados, enEspera, cupo, refresh));
   } else if (esc.status !== 'cancelled') {
@@ -667,7 +667,7 @@ function pedirMotivoCancelacion(confirmados, cupo) {
    recepcion lo VEA antes de arrancar y lo resuelva de frente, que es
    quien tiene a la gente enfrente.
    ============================================================ */
-function renderSinConfirmar(confirmados, refresh) {
+function renderSinConfirmar(esc, ws, confirmados, refresh) {
   const pend = confirmados.filter((r) => r.partner_id && r.partner_status === 'pending');
   if (!pend.length) return el('span', { style: 'display:none;' });
 
@@ -680,13 +680,14 @@ function renderSinConfirmar(confirmados, refresh) {
     + 'si no van a venir, libéralo para que entre alguien de la lista de espera.'));
 
   pend.forEach((r, i) => {
-    if (i > 0) card.appendChild(el('hr', { class: 'sep', style: 'margin:10px 0;' }));
-    else card.appendChild(el('hr', { class: 'sep', style: 'margin:12px 0 10px;' }));
-    card.appendChild(el('div', { class: 'row gap-2', style: 'align-items:center;font-weight:600;font-size:14px;' }, [
+    const fila = el('div', { class: 'fila-sin-confirmar' });
+    if (i > 0) fila.appendChild(el('hr', { class: 'sep', style: 'margin:10px 0;' }));
+    else fila.appendChild(el('hr', { class: 'sep', style: 'margin:12px 0 10px;' }));
+    fila.appendChild(el('div', { class: 'row gap-2', style: 'align-items:center;font-weight:600;font-size:14px;' }, [
       el('span', { class: 'avatar-mini' }, avatarContent(r.profiles || {})),
       el('span', {}, (r.profiles && r.profiles.full_name) || '(sin nombre)'),
     ]));
-    card.appendChild(el('div', { class: 'btn-row mt-2' }, [
+    fila.appendChild(el('div', { class: 'btn-row mt-2' }, [
       el('button', { class: 'btn btn-secondary btn-sm', onclick: async (e) => {
         e.target.disabled = true;
         try { await responderInvitacionPareja(r.id, true); toast('Confirmado.', 'success'); refresh(); }
@@ -703,6 +704,15 @@ function renderSinConfirmar(confirmados, refresh) {
         catch (err) { toast(humanizeError(err), 'error'); }
       } }, 'No viene'),
     ]));
+
+    // Botón de WhatsApp aparte, en su propia línea — solo lo ve admin/maestro
+    // (esta pantalla ya es exclusiva para ellos). Nunca ofrece confirmar por
+    // WhatsApp: solo manda a la persona directo a la app a confirmar ahí.
+    const waUrl = waLinkConfirmarInvitacion(r.profiles || {}, esc.session_date, ws.start_time);
+    fila.appendChild(waUrl
+      ? el('a', { class: 'btn btn-sm mt-2', style: 'background:#25D366;color:#fff;', href: waUrl, target: '_blank', rel: 'noopener' }, 'Avisarle por WhatsApp')
+      : el('p', { class: 'text-tiny mt-2', style: 'color:var(--text-tertiary);' }, 'Sin teléfono registrado — avísale en persona.'));
+    card.appendChild(fila);
   });
 
   box.appendChild(card);
